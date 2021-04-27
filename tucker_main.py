@@ -1,75 +1,174 @@
 import numpy as np
 import tensorly as tl
 from tensorly.random import random_tucker
+import time
 
-def tensor_to_vector(tensor):
-    num_elements = 1
-    for n in tensor.shape:
-        num_elements *= n
-    return tl.reshape(tensor, (num_elements, 1))
+def tensor_index_to_vec_index(tensor_index, shape):
+    return np.ravel_multi_index(tensor_index, shape)
+
+def vec_index_to_tensor_index(vec_index, shape):
+    return np.unravel_index(vec_index, shape)
 
 def solve_least_squares(A, b, l2_regularization):
     AtA_lambda = A.T @ A + l2_regularization * np.identity(A.shape[1])
     Atb = A.T @ b
     return np.linalg.solve(AtA_lambda, Atb)
 
+# TODO(fahrbach): Show why higher-order SVD methods do not scale well? Seems
+# that they might if we use compressed representation?
 def update_factor_matrix(X_tucker, Y_tensor, factor_index, l2_regularization):
     # See the matricized version of Equation 4.2 in "Tensor Decompositions and
     # Applications."
     Y_matrix = tl.unfold(Y_tensor, factor_index)
     core_matrix = tl.unfold(X_tucker.core, factor_index)
     K_matrix = np.identity(1)
-    for n in range(len(X_tucker.core.shape)):
+    for n in range(X_tucker.core.ndim):
         if n == factor_index: continue
-        # Important: Note the ordering of this Kronecker product. For some
-        # reason, it disagrees with Equation 4.2 in the reference above... Do
-        # they have a typo?
+        # Important: For some reason, the ordering of this Kronecker product
+        # disagrees with Equation 4.2 in the reference above. Did they introduce
+        # a typo by thinking that the transpose reverses the order?
         K_matrix = np.kron(K_matrix, X_tucker.factors[n])
-
     # Each row of the current factor matrix is its own least squares problem.
     design_matrix = K_matrix @ core_matrix.T
     for row_index in range(X_tucker.factors[factor_index].shape[0]):
-        response_vector = Y_matrix[row_index,:]
+        response_vec = Y_matrix[row_index,:]
         X_tucker.factors[factor_index][row_index,:] = solve_least_squares( \
-                design_matrix, response_vector, l2_regularization)
+                design_matrix, response_vec, l2_regularization)
 
-# TODO(fahrbach): Need to avoid O(n * d^2) space bottleneck. Shouldn't compute
-# the design matrix explicitly.
-def construct_linear_system_for_core_tensor(X_tucker, Y_tensor, l2_regularization):
-    d = 1
-    for dimension in X_tucker.core.shape:
-        d *= dimension
-    A = l2_regularization * np.identity(d)
-
+# Naive core tensor update that explicitly constructs the design matrix. This
+# requires O((I_1 * I_2 * I_3) * (R_1 * R_2 * R_3)) space, and is prohibitively
+# expensive for anything interesting. It also seems less numerically stable?
+def update_core_tensor_naive(X_tucker, Y_tensor, l2_regularization):
     design_matrix = np.identity(1)
-    for n in range(len(X_tucker.core.shape)):
+    for n in range(X_tucker.core.ndim):
         design_matrix = np.kron(design_matrix, X_tucker.factors[n])
-    Y_vector = tensor_to_vector(Y_tensor)
-    return design_matrix, Y_vector
 
+    Y_vec = tl.tensor_to_vec(Y_tensor)
+
+    new_core_tensor_vec = solve_least_squares( \
+            design_matrix, Y_vec, l2_regularization)
+    X_tucker.core = tl.reshape(new_core_tensor_vec, X_tucker.core.shape)
+
+# Memory-efficient construction of the normal equation for the core tensor
+# update.
+#
+# Note: Preliminary experiments show we can speed up computinig K^T * vec(Y) by
+# about ~40% by manually iteratinig over the core tensor with nested for loops
+# and keeping track of partially constructed Kronecker products. We should
+# probably implement the core tensor this way for the most fair baseline.
+def update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization):
+    # Construct K^T K + \lambda * I.
+    KtK_lambda = np.identity(1)
+    for n in range(len(X_tucker.factors)):
+        KtK_lambda = np.kron(KtK_lambda, \
+                X_tucker.factors[n].T @ X_tucker.factors[n])
+    KtK_lambda += l2_regularization * np.identity(KtK_lambda.shape[0])
+
+    """
+    if X_tucker.core.ndim == 3:
+        print('starting...')
+        Y_vec = tl.tensor_to_vec(Y_tensor)
+        b = np.zeros(KtK_lambda.shape[0])
+        row_index = 0
+        for core_index_0 in range(X_tucker.core.shape[0]):
+            factor_matrix_col_T_0 = X_tucker.factors[0][:,core_index_0].T
+            design_matrix_col_T_0 = factor_matrix_col_T_0
+            for core_index_1 in range(X_tucker.core.shape[1]):
+                factor_matrix_col_T_1 = X_tucker.factors[1][:,core_index_1].T
+                design_matrix_col_T_1 = np.kron(design_matrix_col_T_0, factor_matrix_col_T_1)
+                for core_index_2 in range(X_tucker.core.shape[2]):
+                    factor_matrix_col_T_2 = X_tucker.factors[2][:,core_index_2].T
+                    design_matrix_col_T_2 = np.kron(design_matrix_col_T_1, factor_matrix_col_T_2)
+                    b[row_index] = design_matrix_col_T_2 @ Y_vec
+                    row_index += 1
+        print('stop.')
+    else:
+        assert(False)
+    """
+
+    print('starting...')
+    # This part of the core update is the bottleneck down due to cache misses.
+    Y_vec = tl.tensor_to_vec(Y_tensor)
+    b = np.zeros(KtK_lambda.shape[0])
+    for row_index in range(len(b)):
+        kronecker_index = vec_index_to_tensor_index(row_index, X_tucker.core.shape)
+        design_matrix_col_T = np.identity(1)
+        for n in range(X_tucker.core.ndim):
+            factor_index = kronecker_index[n]
+            design_matrix_col_T = np.kron(design_matrix_col_T, \
+                    X_tucker.factors[n][:,factor_index].T)
+        b[row_index] = design_matrix_col_T @ Y_vec
+    print('stop.')
+
+    new_core_tensor_vec = np.linalg.solve(KtK_lambda, b)
+    X_tucker.core = tl.reshape(new_core_tensor_vec, X_tucker.core.shape)
+
+def update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization):
+    # Construct K^T K + \lambda * I.
+    KtK_lambda = np.identity(1)
+    for n in range(len(X_tucker.factors)):
+        KtK_lambda = np.kron(KtK_lambda, \
+                X_tucker.factors[n].T @ X_tucker.factors[n])
+    KtK_lambda += l2_regularization * np.identity(KtK_lambda.shape[0])
+
+    """
+    if X_tucker.core.ndim == 3:
+        print('starting...')
+        Y_vec = tl.tensor_to_vec(Y_tensor)
+        b = np.zeros(KtK_lambda.shape[0])
+        row_index = 0
+        for core_index_0 in range(X_tucker.core.shape[0]):
+            factor_matrix_col_T_0 = X_tucker.factors[0][:,core_index_0].T
+            design_matrix_col_T_0 = factor_matrix_col_T_0
+            for core_index_1 in range(X_tucker.core.shape[1]):
+                factor_matrix_col_T_1 = X_tucker.factors[1][:,core_index_1].T
+                design_matrix_col_T_1 = np.kron(design_matrix_col_T_0, factor_matrix_col_T_1)
+                for core_index_2 in range(X_tucker.core.shape[2]):
+                    factor_matrix_col_T_2 = X_tucker.factors[2][:,core_index_2].T
+                    design_matrix_col_T_2 = np.kron(design_matrix_col_T_1, factor_matrix_col_T_2)
+                    b[row_index] = design_matrix_col_T_2 @ Y_vec
+                    row_index += 1
+        print('stop.')
+    else:
+        assert(False)
+    """
+
+    print('starting...')
+    # This part of the core update is the bottleneck down due to cache misses.
+    Y_vec = tl.tensor_to_vec(Y_tensor)
+    b = np.zeros(KtK_lambda.shape[0])
+    for row_index in range(len(b)):
+        kronecker_index = vec_index_to_tensor_index(row_index, X_tucker.core.shape)
+        design_matrix_col_T = np.identity(1)
+        for n in range(X_tucker.core.ndim):
+            factor_index = kronecker_index[n]
+            design_matrix_col_T = np.kron(design_matrix_col_T, \
+                    X_tucker.factors[n][:,factor_index].T)
+        b[row_index] = design_matrix_col_T @ Y_vec
+    print('stop.')
+
+    new_core_tensor_vec = np.linalg.solve(KtK_lambda, b)
+    X_tucker.core = tl.reshape(new_core_tensor_vec, X_tucker.core.shape)
+        
 def compute_loss(Y_tensor, X_tucker, l2_regularization):
     loss = 0.0
-    residual_vector = tensor_to_vector(Y_tensor - tl.tucker_to_tensor(X_tucker))
-    loss += np.linalg.norm(residual_vector)**2
-    loss += l2_regularization * np.linalg.norm(tensor_to_vector(X_tucker.core))**2
+    residual_vec = tl.tensor_to_vec(Y_tensor - tl.tucker_to_tensor(X_tucker))
+    loss += np.linalg.norm(residual_vec)**2
+    loss += l2_regularization * np.linalg.norm(tl.tensor_to_vec(X_tucker.core))**2
     for n in range(len(X_tucker.factors)):
         loss += l2_regularization * np.linalg.norm(X_tucker.factors[n])**2
     return loss
 
+# Simple tensor decomposition experiment that uses alternating least squares to
+# decompose a tensor Y generated from a random Tucker decomposition.
 def main():
-    shape = (300, 40, 4)
+    shape = (300, 400, 400)
     rank = (10, 5, 2)
-    l2_regularization = 0.00001
+    l2_regularization = 0.01
     order = len(shape)
-
-    # These settings converge nicely.
-    """
-    shape = (30, 400, 40, 5)
-    rank = (4, 4, 2, 2)
-    l2_regularization = 0.0001
-    order = len(shape)
-    # set Y_tensor[0,0,0,0] = 1
-    """
+    num_elements = 1
+    for dimension in shape:
+        num_elements *= dimension
 
     # --------------------------------------------------------------------------
     # Intialize tensors.
@@ -80,7 +179,7 @@ def main():
     print(Y_tucker)
     print()
 
-    X_tucker = random_tucker(shape, rank, random_state=2)
+    X_tucker = random_tucker(shape, rank, random_state=1)
     print('Learned tensor X:')
     print(X_tucker)
     print()
@@ -89,33 +188,34 @@ def main():
     print('Loss:', loss)
     print()
 
-    for step in range(10000):
-        print('Step:', step, '###################################')
+    for step in range(10):
+        print('Step:', step)
         # --------------------------------------------------------------------------
         # Factor matrix updates:
-        for factor_index in range(len(X_tucker.core.shape)):
+        for factor_index in range(X_tucker.core.ndim):
             #print('Updating factor matrix:', factor_index)
+            start_time = time.time()
             update_factor_matrix(X_tucker, Y_tensor, factor_index, l2_regularization)
+            end_time = time.time()
+
             new_loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
-            print('Loss:', new_loss)
+            rmse = (new_loss / num_elements)**0.5
+            print('Loss: {} RMSE: {} Time: {}'.format(new_loss, rmse, end_time - start_time))
             if new_loss > loss:
-                print('Loss function increased!!!!!!!!!')
+                print('Warning: The loss function increased!')
             loss = new_loss
         
         # --------------------------------------------------------------------------
         # Core tensor update:
-        #print('Updating core tensor')
-        # Constructing the design matrix is killing the algorithm...
-        design_matrix, Y_vector = construct_linear_system_for_core_tensor( \
-                X_tucker, Y_tensor, l2_regularization)
-        y = solve_least_squares(design_matrix, Y_vector, l2_regularization)
-        del design_matrix
-        # Update core tensor.
-        X_tucker.core = tl.reshape(y, rank)
+        start_time = time.time()
+        update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization)
+        end_time = time.time()
+
         new_loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
-        print('Loss:', new_loss)
+        rmse = (new_loss / num_elements)**0.5
+        print('Loss: {} RMSE: {} Time: {}'.format(new_loss, rmse, end_time - start_time))
         if new_loss > loss:
-            print('Loss function increased!!!!!!!!!')
+            print('Warning: The loss function increased!')
         loss = new_loss
 
 main()
