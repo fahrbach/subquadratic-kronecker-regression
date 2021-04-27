@@ -3,6 +3,8 @@ import tensorly as tl
 from tensorly.random import random_tucker
 import time
 
+# TODO(fahrbach): Use a logger instead of print statements.
+
 def tensor_index_to_vec_index(tensor_index, shape):
     return np.ravel_multi_index(tensor_index, shape)
 
@@ -52,24 +54,34 @@ def update_core_tensor_naive(X_tucker, Y_tensor, l2_regularization):
 # Memory-efficient construction of the normal equation for the core tensor
 # update.
 #
-# Note: Preliminary experiments show we can speed up computinig K^T * vec(Y) by
-# about ~40% by manually iteratinig over the core tensor with nested for loops
-# and keeping track of partially constructed Kronecker products. We should
-# probably implement the core tensor this way for the most fair baseline.
+# Note that we manually sped up the computation of K^T * vec(Y) by storing
+# partially constructed Kronecker rows to avoid recomputation. This gave a
+# speedup of ~40% over the simpler implementation.
 def update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization):
-    # Construct K^T K + \lambda * I.
     KtK_lambda = np.identity(1)
     for n in range(len(X_tucker.factors)):
         KtK_lambda = np.kron(KtK_lambda, \
                 X_tucker.factors[n].T @ X_tucker.factors[n])
     KtK_lambda += l2_regularization * np.identity(KtK_lambda.shape[0])
 
-    """
-    if X_tucker.core.ndim == 3:
-        print('starting...')
-        Y_vec = tl.tensor_to_vec(Y_tensor)
-        b = np.zeros(KtK_lambda.shape[0])
-        row_index = 0
+    factors_T = [factor.T.copy() for factor in X_tucker.factors]
+    Y_vec = tl.tensor_to_vec(Y_tensor)
+    b = np.zeros(KtK_lambda.shape[0])
+    row_index = 0
+
+    # Note: fahrbach thinks this is still much slower than it could be due to
+    # Python loop slowdowns. Is it possible to only use NumPY operations without
+    # using too much memory?
+    if X_tucker.core.ndim == 2:
+        for core_index_0 in range(X_tucker.core.shape[0]):
+            factor_matrix_col_T_0 = X_tucker.factors[0][:,core_index_0].T
+            design_matrix_col_T_0 = factor_matrix_col_T_0
+            for core_index_1 in range(X_tucker.core.shape[1]):
+                factor_matrix_col_T_1 = X_tucker.factors[1][:,core_index_1].T
+                design_matrix_col_T_1 = np.kron(design_matrix_col_T_0, factor_matrix_col_T_1)
+                b[row_index] = design_matrix_col_T_1 @ Y_vec
+                row_index += 1
+    elif X_tucker.core.ndim == 3:
         for core_index_0 in range(X_tucker.core.shape[0]):
             factor_matrix_col_T_0 = X_tucker.factors[0][:,core_index_0].T
             design_matrix_col_T_0 = factor_matrix_col_T_0
@@ -81,74 +93,47 @@ def update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization):
                     design_matrix_col_T_2 = np.kron(design_matrix_col_T_1, factor_matrix_col_T_2)
                     b[row_index] = design_matrix_col_T_2 @ Y_vec
                     row_index += 1
-        print('stop.')
     else:
+        print('Core tensor of order', X_tucker.core.ndim, 'not supported.')
         assert(False)
-    """
-
-    print('starting...')
-    # This part of the core update is the bottleneck down due to cache misses.
-    Y_vec = tl.tensor_to_vec(Y_tensor)
-    b = np.zeros(KtK_lambda.shape[0])
-    for row_index in range(len(b)):
-        kronecker_index = vec_index_to_tensor_index(row_index, X_tucker.core.shape)
-        design_matrix_col_T = np.identity(1)
-        for n in range(X_tucker.core.ndim):
-            factor_index = kronecker_index[n]
-            design_matrix_col_T = np.kron(design_matrix_col_T, \
-                    X_tucker.factors[n][:,factor_index].T)
-        b[row_index] = design_matrix_col_T @ Y_vec
-    print('stop.')
 
     new_core_tensor_vec = np.linalg.solve(KtK_lambda, b)
     X_tucker.core = tl.reshape(new_core_tensor_vec, X_tucker.core.shape)
 
-def update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization):
-    # Construct K^T K + \lambda * I.
-    KtK_lambda = np.identity(1)
-    for n in range(len(X_tucker.factors)):
-        KtK_lambda = np.kron(KtK_lambda, \
-                X_tucker.factors[n].T @ X_tucker.factors[n])
-    KtK_lambda += l2_regularization * np.identity(KtK_lambda.shape[0])
+def compute_ridge_leverage_scores(A, l2_regularization=0.0):
+    normal_matrix = A.T @ A + l2_regularization * np.identity(A.shape[1])
+    normal_matrix_pinv = np.linalg.pinv(normal_matrix)
+    leverage_scores = np.zeros(A.shape[0])
+    for i in range(A.shape[0]):
+        leverage_scores[i] = A[i,:] @ normal_matrix_pinv @ A[i,:].T
+    return leverage_scores
 
-    """
-    if X_tucker.core.ndim == 3:
-        print('starting...')
-        Y_vec = tl.tensor_to_vec(Y_tensor)
-        b = np.zeros(KtK_lambda.shape[0])
-        row_index = 0
-        for core_index_0 in range(X_tucker.core.shape[0]):
-            factor_matrix_col_T_0 = X_tucker.factors[0][:,core_index_0].T
-            design_matrix_col_T_0 = factor_matrix_col_T_0
-            for core_index_1 in range(X_tucker.core.shape[1]):
-                factor_matrix_col_T_1 = X_tucker.factors[1][:,core_index_1].T
-                design_matrix_col_T_1 = np.kron(design_matrix_col_T_0, factor_matrix_col_T_1)
-                for core_index_2 in range(X_tucker.core.shape[2]):
-                    factor_matrix_col_T_2 = X_tucker.factors[2][:,core_index_2].T
-                    design_matrix_col_T_2 = np.kron(design_matrix_col_T_1, factor_matrix_col_T_2)
-                    b[row_index] = design_matrix_col_T_2 @ Y_vec
-                    row_index += 1
-        print('stop.')
-    else:
-        assert(False)
-    """
+def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization):
+    print('Starting to compute leverage scores.')
+    leverage_scores = [compute_ridge_leverage_scores(factor) for factor in X_tucker.factors]
+    print('Finished.')
 
-    print('starting...')
     # This part of the core update is the bottleneck down due to cache misses.
-    Y_vec = tl.tensor_to_vec(Y_tensor)
-    b = np.zeros(KtK_lambda.shape[0])
-    for row_index in range(len(b)):
-        kronecker_index = vec_index_to_tensor_index(row_index, X_tucker.core.shape)
-        design_matrix_col_T = np.identity(1)
-        for n in range(X_tucker.core.ndim):
-            factor_index = kronecker_index[n]
-            design_matrix_col_T = np.kron(design_matrix_col_T, \
-                    X_tucker.factors[n][:,factor_index].T)
-        b[row_index] = design_matrix_col_T @ Y_vec
-    print('stop.')
+    print('Start sampling')
+    X_shape = []
+    num_elements = 1
+    for n in range(X_tucker.core.ndim):
+        X_shape.append(X_tucker.factors[n].shape[0])
+        num_elements *= X_shape[-1]
 
-    new_core_tensor_vec = np.linalg.solve(KtK_lambda, b)
-    X_tucker.core = tl.reshape(new_core_tensor_vec, X_tucker.core.shape)
+    # TODO(fahrbach): We need to do the sampling in C++ since Python for loops
+    # are so slow. This is fair since all of NumPY is C or Fortran.
+    row_index = 0
+    while row_index < num_elements:
+    #for row_index in range(num_elements):
+        kronecker_index = vec_index_to_tensor_index(row_index, X_shape)
+        leverage_score = 1.0
+        for n in range(X_tucker.core.ndim):
+            factor_row_index = kronecker_index[n]
+            leverage_score *= leverage_scores[n][factor_row_index]
+        #print(row_index, kronecker_index, leverage_score)
+        row_index += 1
+    print('Finished.')
         
 def compute_loss(Y_tensor, X_tucker, l2_regularization):
     loss = 0.0
@@ -162,8 +147,8 @@ def compute_loss(Y_tensor, X_tucker, l2_regularization):
 # Simple tensor decomposition experiment that uses alternating least squares to
 # decompose a tensor Y generated from a random Tucker decomposition.
 def main():
-    shape = (300, 400, 400)
-    rank = (10, 5, 2)
+    shape = (300, 400, 40)
+    rank = (10, 50, 2)
     l2_regularization = 0.01
     order = len(shape)
     num_elements = 1
@@ -209,6 +194,7 @@ def main():
         # Core tensor update:
         start_time = time.time()
         update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization)
+        #update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization)
         end_time = time.time()
 
         new_loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
