@@ -1,6 +1,7 @@
 import numpy as np
 import tensorly as tl
 from tensorly.random import random_tucker
+import os
 import time
 
 # TODO(fahrbach): Use a logger instead of print statements.
@@ -108,33 +109,62 @@ def compute_ridge_leverage_scores(A, l2_regularization=0.0):
         leverage_scores[i] = A[i,:] @ normal_matrix_pinv @ A[i,:].T
     return leverage_scores
 
-def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization):
-    print('Starting to compute leverage scores.')
-    leverage_scores = [compute_ridge_leverage_scores(factor) for factor in X_tucker.factors]
-    print('Finished.')
-
-    # This part of the core update is the bottleneck down due to cache misses.
-    print('Start sampling')
-    X_shape = []
-    num_elements = 1
-    for n in range(X_tucker.core.ndim):
-        X_shape.append(X_tucker.factors[n].shape[0])
-        num_elements *= X_shape[-1]
-
-    # TODO(fahrbach): We need to do the sampling in C++ since Python for loops
-    # are so slow. This is fair since all of NumPY is C or Fortran.
-    row_index = 0
-    while row_index < num_elements:
-    #for row_index in range(num_elements):
-        kronecker_index = vec_index_to_tensor_index(row_index, X_shape)
-        leverage_score = 1.0
+def write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization, epsilon, step):
+    filename = 'leverage_scores.txt'
+    with open(filename, 'w') as f:
+        instance_info = [X_tucker.core.ndim, l2_regularization, epsilon, step]
+        f.write(' '.join(str(_) for _ in instance_info) + '\n')
         for n in range(X_tucker.core.ndim):
-            factor_row_index = kronecker_index[n]
-            leverage_score *= leverage_scores[n][factor_row_index]
-        #print(row_index, kronecker_index, leverage_score)
-        row_index += 1
-    print('Finished.')
-        
+            factor = X_tucker.factors[n]
+            factor_spectral_norm = np.linalg.norm(factor, 2)**2
+            factor_info = [factor.shape[0], factor.shape[1], factor_spectral_norm]
+            f.write(' '.join(str(_) for _ in factor_info) + '\n')
+            f.write(' '.join(str(score) for score in leverage_scores[n]) + '\n')
+
+def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization, step):
+    epsilon = 0.5
+    leverage_scores = [compute_ridge_leverage_scores(factor) for factor in X_tucker.factors]
+    
+    num_original_rows = 1
+    for n in range(X_tucker.core.ndim):
+        num_original_rows *= X_tucker.factors[n].shape[0]
+    
+    num_core_elements = 1
+    for dimension in X_tucker.core.shape:
+        num_core_elements *= dimension
+
+    write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization, epsilon, step)
+    cmd = './row_sampling'
+    os.system(cmd)
+
+    filename = 'sampled_rows.csv'
+    with open(filename, 'r') as f:
+        lines = f.readlines()
+        num_sampled_rows = int(lines[0])
+        assert(len(lines) == num_sampled_rows + 1)
+        print('num_sampled_rows:', num_sampled_rows, \
+              'ratio:', float(num_sampled_rows) / num_original_rows)
+
+        # Note: This is not memory efficient, but I want to get things off the ground.
+        design_matrix = np.zeros((num_sampled_rows, num_core_elements))
+        response_vec = np.zeros(num_sampled_rows)
+        for line_index in range(1, len(lines)):
+            line = lines[line_index].strip().split(',')
+            row_index = line_index - 1
+            shape_indices = [int(_) for _ in line[:-1]]
+            sample_probability = float(line[-1])
+
+            # Note: It seems that constructing this row is fairly slow...
+            row = np.identity(1)
+            for n in range(X_tucker.core.ndim):
+                row = np.kron(row, X_tucker.factors[n][shape_indices[n],:])
+            row *= (1.0 / sample_probability)**0.5
+            design_matrix[row_index,:] = row
+            response_vec[row_index] = Y_tensor[tuple(shape_indices)]
+            response_vec[row_index] *= (1.0 / sample_probability)**0.5
+        new_core_vec = solve_least_squares(design_matrix, response_vec, l2_regularization)
+        X_tucker.core = tl.reshape(new_core_vec, X_tucker.core.shape)
+
 def compute_loss(Y_tensor, X_tucker, l2_regularization):
     loss = 0.0
     residual_vec = tl.tensor_to_vec(Y_tensor - tl.tucker_to_tensor(X_tucker))
@@ -147,13 +177,14 @@ def compute_loss(Y_tensor, X_tucker, l2_regularization):
 # Simple tensor decomposition experiment that uses alternating least squares to
 # decompose a tensor Y generated from a random Tucker decomposition.
 def main():
-    shape = (300, 400, 40)
-    rank = (10, 50, 2)
+    shape = (1000, 1000, 100)
+    rank = (10, 5, 2)
     l2_regularization = 0.01
     order = len(shape)
     num_elements = 1
     for dimension in shape:
         num_elements *= dimension
+    os.system('g++-10 -O2 -std=c++11 row_sampling.cc -o row_sampling')
 
     # --------------------------------------------------------------------------
     # Intialize tensors.
@@ -194,7 +225,7 @@ def main():
         # Core tensor update:
         start_time = time.time()
         update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization)
-        #update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization)
+        #update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization, step)
         end_time = time.time()
 
         new_loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
@@ -203,5 +234,6 @@ def main():
         if new_loss > loss:
             print('Warning: The loss function increased!')
         loss = new_loss
+        print()
 
 main()
