@@ -3,7 +3,8 @@ using namespace std;
 
 struct InstanceInfo {
   int num_dimensions, step;
-  double l2_regularization, epsilon;
+  double l2_regularization, epsilon, delta;
+  // Factor matrices:
   std::vector<int> num_rows, num_cols;
   std::vector<double> factor_norms;
   std::vector<std::vector<double>> leverage_scores;
@@ -15,6 +16,7 @@ InstanceInfo ReadLeverageScores() {
   file >> instance_info.num_dimensions;
   file >> instance_info.l2_regularization;
   file >> instance_info.epsilon;
+  file >> instance_info.delta;
   file >> instance_info.step;
   for (int n = 0; n < instance_info.num_dimensions; n++) {
     int num_rows, num_cols;
@@ -31,50 +33,116 @@ InstanceInfo ReadLeverageScores() {
   return instance_info;
 }
 
-double rand_double() {
-  return (double)rand() / RAND_MAX;
+// Input:
+// - Cumulative density functions for each of the factor matrices.
+// - K_leverage_score_sum should equal d if l2_regularization = 0.0. Only useful
+//   as we generalize to ridge leverage scores.
+// - d is the number of columns (i.e., the rank of the augmented design matrix).
+// - Mutable RNG.
+//
+// Output:
+// - If we sample a row of the original design matrix, we return the row indexed
+//   by the row indices of its factor matrices (e.g., {i, j, k}).
+// - If we sample an augmented row, then we encode it by {-1, row_index} where
+//   row_index \in {0, 1, ..., d - 1}.
+// - The second part of the pair is the probability with which this row was
+//   sampled.
+inline pair<vector<int>, double> SampleFromAugmentedDistribution(
+    const vector<vector<double>>& factor_matrix_ls_cdf,
+    const double& K_leverage_score_sum,
+    const long long& d,
+    mt19937& rng,
+    uniform_real_distribution<double>& uniform_distribution) {
+  pair<vector<int>, double> row_indices_and_probability;
+  // Flip coin to branch between original rows and augmented rows.
+  const double Z = K_leverage_score_sum + d;
+  double r = uniform_distribution(rng);
+  if (Z * r <= K_leverage_score_sum) {  // r <= K_leverage_score_sum / Z
+    vector<int> row_indices;
+    double probability = 1.0;
+    for (int n = 0; n < factor_matrix_ls_cdf.size(); n++) {
+      r = uniform_distribution(rng);
+      auto it = upper_bound(factor_matrix_ls_cdf[n].begin(), factor_matrix_ls_cdf[n].end(), r);
+      int row_index = it - factor_matrix_ls_cdf[n].begin();
+      if (row_index == factor_matrix_ls_cdf[n].size()) row_index--;
+      double p = factor_matrix_ls_cdf[n][row_index];
+      if (row_index > 0) p -= factor_matrix_ls_cdf[n][row_index - 1];
+      //cout << "sample original row: " << n << " " << r << ": " << *it << " " << row_index << " " << p << endl;
+      row_indices.push_back(row_index);
+      probability *= p;
+    }
+    row_indices_and_probability.first = row_indices;
+    row_indices_and_probability.second = probability;
+  } else {
+    r = uniform_distribution(rng);
+    int row_index = r * d;
+    if (row_index == d) row_index--;
+    row_indices_and_probability.first = {-1, row_index};
+    row_indices_and_probability.second = 1.0 / Z;
+    // cout << "sample ridge row: " << row_index << " " << 1.0 / Z << endl;
+  }
+  return row_indices_and_probability;
 }
 
 int main() {
   const auto instance = ReadLeverageScores();
 
-  double leverage_score_sum = 1.0;
+  // Compute number of columns in the design matrix.
+  long long d = 1;
   for (int n = 0; n < instance.num_dimensions; n++) {
-    double dim_sum = 0.0;
-    for (const double leverage_score : instance.leverage_scores.at(n)) {
-      dim_sum += leverage_score;
-    }
-    leverage_score_sum *= dim_sum;
+    d *= instance.num_cols[n];
   }
-  const double delta = 0.01;
-
+  const double epsilon = instance.epsilon;
+  const double delta = instance.delta;
+  double sample_term_1 = 420 * log(4*d / delta);
+  double sample_term_2 = pow(delta * epsilon, -1);
+  long long num_samples = 4 * d * 2 * max(sample_term_1, sample_term_2);
 
   assert(instance.num_dimensions == 3);
-  ofstream output_file("sampled_rows.csv");
-  
-  // TODO(fahrbach): Use better RNG.
-  srand(instance.step);
-  long long num_sampled_rows = 0;
-  std::vector<std::pair<std::vector<int>, double>> buffer;
-  for (int i = 0; i < instance.num_rows[0]; i++) {
-    for (int j = 0; j < instance.num_rows[1]; j++) {
-      for (int k = 0; k < instance.num_rows[2]; k++) {
-        double kronecker_leverage_score = instance.leverage_scores[0][i]
-          * instance.leverage_scores[1][j] * instance.leverage_scores[2][k];
-        double sample_probability = 16 * kronecker_leverage_score * log(leverage_score_sum / delta) / std::pow(instance.epsilon, 2);
-        if (sample_probability > rand_double()) {
-          //output_file << i << "," << j << "," << k << "," << kronecker_leverage_score << endl;
-          buffer.push_back({{i,j,k}, sample_probability});
-          num_sampled_rows++;
-        }
-      }
+
+  mt19937 rng;
+  rng.seed(instance.step);  // Need to sample different rows in each step.
+  uniform_real_distribution<double> uniform_distribution(0.0, 1.0);
+
+  // Prepare factor matrix leverage score distributions.
+  double K_leverage_score_sum = 1.0;
+  vector<vector<double>> factor_matrix_ls_cdf(instance.num_dimensions);
+  for (int n = 0; n < instance.num_dimensions; n++) {
+    double factor_matrix_leverage_score_sum = 0.0;
+    for (int i = 0; i < instance.num_rows[n]; i++) {
+      factor_matrix_leverage_score_sum += instance.leverage_scores[n][i];
+    }
+    K_leverage_score_sum *= factor_matrix_leverage_score_sum;
+
+    factor_matrix_ls_cdf[n] = vector<double>(instance.num_rows[n]);
+    for (int i = 0; i < instance.num_rows[n]; i++) {
+      factor_matrix_ls_cdf[n][i] = instance.leverage_scores[n][i];
+      if (i > 0) factor_matrix_ls_cdf[n][i] += factor_matrix_ls_cdf[n][i - 1];
+    }
+    for (int i = 0; i < instance.num_rows[n]; i++) {
+      factor_matrix_ls_cdf[n][i] /= factor_matrix_leverage_score_sum;
+      // cout << n << " " << i << " cdf: " << factor_matrix_ls_cdf[n][i] << endl;
     }
   }
-  // Write sample row indices and sample probability to file.
-  output_file << num_sampled_rows << endl;
-  for (const auto& row : buffer) {
-    for (const auto index : row.first) output_file << index << ",";
-    output_file << row.second << endl;
+
+  // TODO(fahrbach): Upgrade to unordered_map.
+  map<pair<vector<int>, double>, int> frequency;
+  for (int t = 0; t < num_samples; t++) {
+    auto row_prob = SampleFromAugmentedDistribution(factor_matrix_ls_cdf,
+        K_leverage_score_sum, d, rng, uniform_distribution);
+    frequency[row_prob]++;
+  }
+
+  ofstream output_file("sampled_rows.csv");
+  output_file << frequency.size() << "," << num_samples << endl;
+  for (const auto& kv : frequency) {
+    const vector<int>& row_indices = kv.first.first;
+    const double probability = kv.first.second;
+    const double freq = kv.second;
+    for (const int row_index : row_indices) {
+      output_file << row_index << ",";
+    }
+    output_file << probability << "," << freq << endl;
   }
   return 0;
 }
