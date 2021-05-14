@@ -97,8 +97,8 @@ int main() {
   double sample_term_1 = 420 * log(4*d / delta);
   double sample_term_2 = pow(delta * epsilon, -1);
   long long num_samples = 4 * d * 2 * max(sample_term_1, sample_term_2);
-
-  assert(instance.num_dimensions == 3);
+  // NOTE: Lowering the sample complexity even more to see if we lose solve accuracy.
+  num_samples *= 0.001;
 
   mt19937 rng;
   rng.seed(instance.step);  // Need to sample different rows in each step.
