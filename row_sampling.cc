@@ -3,7 +3,7 @@ using namespace std;
 
 struct InstanceInfo {
   int num_dimensions, step;
-  double l2_regularization, epsilon, delta;
+  double l2_regularization, epsilon, delta, alpha;
   // Factor matrices:
   std::vector<int> num_rows, num_cols;
   std::vector<double> factor_norms;
@@ -18,6 +18,7 @@ InstanceInfo ReadLeverageScores() {
   file >> instance_info.epsilon;
   file >> instance_info.delta;
   file >> instance_info.step;
+  file >> instance_info.alpha;
   for (int n = 0; n < instance_info.num_dimensions; n++) {
     int num_rows, num_cols;
     double factor_norm;
@@ -98,7 +99,7 @@ int main() {
   double sample_term_2 = pow(delta * epsilon, -1);
   long long num_samples = 4 * d * 2 * max(sample_term_1, sample_term_2);
   // NOTE: Lowering the sample complexity even more to see if we lose solve accuracy.
-  num_samples *= 0.001;
+  num_samples *= instance.alpha;
 
   mt19937 rng;
   rng.seed(instance.step);  // Need to sample different rows in each step.
