@@ -38,10 +38,15 @@ def update_factor_matrix(X_tucker, Y_tensor, factor_index, l2_regularization, de
     if debug_mode:
         print(' - design matrix shape:', design_matrix.shape)
         print(' - number of least squares solves:', X_tucker.factors[factor_index].shape[0])
+
+    # Use the same "normalized" design matrix for all least squares solves.
+    AtA_lambda = design_matrix.T @ design_matrix \
+            + l2_regularization * np.identity(design_matrix.shape[1])
     for row_index in range(X_tucker.factors[factor_index].shape[0]):
         response_vec = Y_matrix[row_index,:]
-        X_tucker.factors[factor_index][row_index,:] = solve_least_squares( \
-                design_matrix, response_vec, l2_regularization)
+        Atb = design_matrix.T @ response_vec
+        X_tucker.factors[factor_index][row_index,:] = \
+                np.linalg.solve(AtA_lambda, Atb)
 
 # Naive core tensor update that explicitly constructs the design matrix. This
 # requires O((I_1 * I_2 * I_3) * (R_1 * R_2 * R_3)) space, and is prohibitively
