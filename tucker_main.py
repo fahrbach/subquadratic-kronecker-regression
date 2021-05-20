@@ -103,6 +103,7 @@ def update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization, d
                 design_matrix_col_T_1 = np.kron(design_matrix_col_T_0, factor_matrix_col_T_1)
                 b[row_index] = design_matrix_col_T_1 @ Y_vec
                 row_index += 1
+
     elif X_tucker.core.ndim == 3:
         for core_index_0 in range(X_tucker.core.shape[0]):
             factor_matrix_col_T_0 = X_tucker.factors[0][:,core_index_0].T
@@ -115,6 +116,7 @@ def update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization, d
                     design_matrix_col_T_2 = np.kron(design_matrix_col_T_1, factor_matrix_col_T_2)
                     b[row_index] = design_matrix_col_T_2 @ Y_vec
                     row_index += 1
+
     elif X_tucker.core.ndim == 4:
         for core_index_0 in range(X_tucker.core.shape[0]):
             factor_matrix_col_T_0 = X_tucker.factors[0][:,core_index_0].T
@@ -165,6 +167,8 @@ def write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization, 
             f.write(' '.join(str(score) for score in leverage_scores[n]) + '\n')
 
 def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization, step, epsilon, delta, downsampling_ratio, debug_mode):
+    global output_file
+
     start_time = time.time()
     leverage_scores = [compute_ridge_leverage_scores(factor, 0.0) for factor in X_tucker.factors]
     end_time = time.time()
@@ -198,11 +202,15 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization, st
             print(' - num sampled rows:', num_sampled_rows)
             print(' - num merged rows:', num_merged_rows, \
                     'ratio:', float(num_merged_rows) / (num_original_rows + num_augmented_rows))
+            output_file.write('num_sampled_rows: {} num_merged_rows: {} ratio: {}\n'.format(\
+                num_sampled_rows, num_merged_rows, float(num_merged_rows) / (num_original_rows + num_augmented_rows)))
 
+        # Memory-efficient core tensor step
         start_time = time.time()
         # Note: This is not memory efficient, but I want to get things off the ground.
         design_matrix = np.zeros((num_merged_rows, num_core_elements))
-        response_vec = np.zeros(num_merged_rows)
+        SAtSA = np.zeros((num_core_elements, num_core_elements))
+        SAtb = np.zeros((num_core_elements, 1))
         
         if debug_mode:
             print(' - sampled augmented design matrix shape:', design_matrix.shape)
@@ -216,29 +224,29 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization, st
 
             # Construct rows in the augmented, sampled design matrix.
             if shape_indices[0] == -1:  # Encoding for ridge rows.
-                row = np.zeros(num_core_elements)
-                row[shape_indices[1]] = l2_regularization**0.5
+                row = np.zeros((1, num_core_elements))
+                row[0, shape_indices[1]] = l2_regularization**0.5
             else:
                 # Note: It seems that constructing this row is fairly slow...
                 row = np.identity(1)
                 for n in range(X_tucker.core.ndim):
                     row = np.kron(row, X_tucker.factors[n][shape_indices[n],:])
             rescaling_coeff = (sample_weight / num_sampled_rows) / sample_probability
-            rescaling_coeff = rescaling_coeff**0.5
-            row *= rescaling_coeff
-            design_matrix[sketched_row_index,:] = row
+            SAtSA += rescaling_coeff * row.T @ row
 
             # Construct entries in the augmented, sampled response vector.
+            sketched_responce_value = 0
             if shape_indices[0] == -1:
-                pass
+                sketched_responce_value = 0
             else:
-                response_vec[sketched_row_index] = Y_tensor[tuple(shape_indices)]
-                response_vec[sketched_row_index] *= rescaling_coeff
+                sketched_responce_value = Y_tensor[tuple(shape_indices)]
+                sketched_responce_value *= rescaling_coeff
+            SAtb += sketched_responce_value * row.T
         end_time = time.time()
         if debug_mode:
             print(' - sampled least squares construction time:', end_time - start_time)
 
-        new_core_vec = solve_least_squares(design_matrix, response_vec, l2_regularization)
+        new_core_vec = np.linalg.solve(SAtSA, SAtb)
         X_tucker.core = tl.reshape(new_core_vec, X_tucker.core.shape)
 
 def compute_loss(Y_tensor, X_tucker, l2_regularization):
@@ -289,6 +297,7 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
             print('Updating core tensor:')
         start_time = time.time()
         if algorithm == 'ALS':
+            #update_core_tensor_naive(X_tucker, Y_tensor, l2_regularization)
             update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization, debug_mode)
         elif algorithm == 'ALS-RS':
             update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization, step, epsilon, delta, downsampling_ratio, debug_mode)
@@ -308,16 +317,22 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
         loss = new_loss
         print()
 
-# Simple tensor decomposition experiment that uses alternating least squares to
-# decompose a tensor Y generated from a random Tucker decomposition.
+# ==============================================================================
+# Synthetic Experiment 1:
+# - Simple tensor decomposition experiment where a tensor Y is randomly generated
+#   by a random Tucker decomposition, with one entry set to Y[0,0,0] = 1, so
+#   that it can't be fit perfectly.
+# - Then we generate a new random Tucker decomposition X (using a different
+#   seed), and we try to learn Y.
+# ==============================================================================
 def run_synthetic_experiment_1():
-    shape = (1024, 1024, 256)
-    rank = (8, 8, 2)
+    shape = (1028, 512, 512)
+    rank = (8, 4, 2)
     steps = 10
     l2_regularization = 0.001
     seed = 0
-    epsilon = 1
-    delta = 1
+    epsilon = 0.1
+    delta = 0.1
     downsampling_ratio = 1.0
     #algorithm = 'ALS'
     algorithm = 'ALS-RS'
@@ -336,7 +351,7 @@ def run_synthetic_experiment_1():
     # Initialize target tensor Y.
     Y_tucker = random_tucker(shape, rank, random_state=(seed + 1000))
     Y = tl.tucker_to_tensor(Y_tucker)
-    Y[0,0,0] = 1
+    Y[0, 0, 0] = 1
 
     print('Y.shape: ', Y.shape)
     output_file.write('Y.shape: ' + str(Y.shape) + '\n')
@@ -384,7 +399,7 @@ def run_cardiac_mri_experiment():
     Y = sio.loadmat(input_filename)['sol_yxzt']
 
     algorithm = 'ALS-RS'
-    #algorithm = 'ALS-RS'
+    #algorithm = 'ALS'
     rank = (4, 4, 2, 2)
     seed = 0
     l2_regularization = 0.001
