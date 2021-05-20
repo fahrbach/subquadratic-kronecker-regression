@@ -310,38 +310,64 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
 
 # Simple tensor decomposition experiment that uses alternating least squares to
 # decompose a tensor Y generated from a random Tucker decomposition.
-def old_main():
-    shape = (1000, 1000, 40)
-    rank = (10, 20, 2)
-    l2_regularization = 0.01
-    algorithm = 'ALS_row_sampling'  # Options: ['ALS', 'ALS_row_sampling']
+def run_synthetic_experiment_1():
+    shape = (1024, 1024, 256)
+    rank = (8, 8, 2)
+    steps = 10
+    l2_regularization = 0.001
+    seed = 0
+    epsilon = 1
+    delta = 1
+    downsampling_ratio = 1.0
     #algorithm = 'ALS'
-    num_steps = 1000
-    debug_mode = False
+    algorithm = 'ALS-RS'
 
-    # Compile the C++ row sampling subroutine.
-    if algorithm == 'ALS_row_sampling':
-        os.system('g++-10 -O2 -std=c++11 row_sampling.cc -o row_sampling')
+    global output_file
+    output_filename = 'output/synthetic-1/synthetic-1'
+    output_filename += '_' + ','.join([str(x) for x in shape])
+    output_filename += '_' + ','.join([str(x) for x in rank])
+    output_filename += '_' + algorithm
+    output_filename += '.txt'
+
+    output_file = open(output_filename, 'a')
+
+    output_file.write('##############################################\n')
 
     # Initialize target tensor Y.
-    Y_tucker = random_tucker(shape, rank, random_state=0)
-    Y_tensor = tl.tucker_to_tensor(Y_tucker)
-    Y_tensor[0,0,0] = 1
-    print('Y:', Y_tucker)
+    Y_tucker = random_tucker(shape, rank, random_state=(seed + 1000))
+    Y = tl.tucker_to_tensor(Y_tucker)
+    Y[0,0,0] = 1
 
-    # Initialize learned tensor X.
-    X_tucker = random_tucker(shape, rank, random_state=1)
-    print('X:', X_tucker)
-    if debug_mode:
-        print(' - shape:', X_tucker.shape)
-        for n in range(len(X_tucker.factors)):
-            print(' - factor matrix ' + str(n) + ' shape:', \
-                    X_tucker.factors[n].shape, 'type:', type(X_tucker.factors[n]))
-        print(' - core shape:', X_tucker.core.shape, 'type:', type(X_tucker.core))
+    print('Y.shape: ', Y.shape)
+    output_file.write('Y.shape: ' + str(Y.shape) + '\n')
 
-    print('algorithm:', algorithm)
-    print()
-    run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, algorithm, num_steps, debug_mode)
+    print('shape: ', shape)
+    output_file.write('rank: ' + str(rank) + '\n')
+    print('rank: ', rank)
+    output_file.write('rank: ' + str(rank) + '\n')
+    print('seed: ', seed)
+    output_file.write('seed: ' + str(seed) + '\n')
+    print('l2_regularization: ', l2_regularization)
+    output_file.write('l2_regularization: ' + str(l2_regularization) + '\n')
+    print('steps: ', steps)
+    output_file.write('steps: ' + str(steps) + '\n')
+    print('epsilon: ', epsilon)
+    output_file.write('epsilon: ' + str(epsilon) + '\n')
+    print('delta: ', delta)
+    output_file.write('delta: ' + str(delta) + '\n')
+    print('downsampling_ratio: ', downsampling_ratio)
+    output_file.write('downsampling_ratio: ' + str(downsampling_ratio) + '\n')
+    print('algorithm: ', algorithm)
+    output_file.write('algorithm: ' + str(algorithm) + '\n')
+    output_file.flush()
+
+    X_tucker = random_tucker(Y.shape, rank, random_state=seed)
+    if algorithm in ['ALS', 'ALS-RS']:
+        os.system('g++-10 -O2 -std=c++11 row_sampling.cc -o row_sampling')
+        run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm, steps, epsilon, delta, downsampling_ratio, True)
+
+    X = tl.tucker_to_tensor(X_tucker)
+    print(X)
 
 def create_output_filename(input_filename, algorithm, rank, steps):
     # Remove "data/" prefix.
@@ -357,7 +383,7 @@ def run_cardiac_mri_experiment():
     input_filename = 'data/Cardiac_MRI_data/sol_yxzt_pat1.mat'
     Y = sio.loadmat(input_filename)['sol_yxzt']
 
-    algorithm = 'ALS'
+    algorithm = 'ALS-RS'
     #algorithm = 'ALS-RS'
     rank = (4, 4, 2, 2)
     seed = 0
@@ -398,13 +424,14 @@ def run_cardiac_mri_experiment():
 
     X_tucker = random_tucker(Y.shape, rank, random_state=seed)
     if algorithm in ['ALS', 'ALS-RS']:
-        run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm, steps, epsilon, delta, downsampling_ratio, True)
+        os.system('g++-10 -O2 -std=c++11 row_sampling.cc -o row_sampling')
         run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm, steps, epsilon, delta, downsampling_ratio, True)
 
     X = tl.tucker_to_tensor(X_tucker)
     print(X)
 
 def main():
-    run_cardiac_mri_experiment()
+    run_synthetic_experiment_1()
+    #run_cardiac_mri_experiment()
 
 main()
