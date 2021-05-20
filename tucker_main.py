@@ -1,12 +1,14 @@
 import numpy as np
 import tensorly as tl
+from tensorly.datasets import synthetic
 from tensorly.random import random_tucker
 import os
 import time
+import matplotlib.pyplot as plt
+from PIL import Image
+import scipy.io as sio
 
-# TODO(fahrbach): Use a logger instead of print statements.
-# TODO(fahrbach): outout/experiment_name/{log, checkpoint}
-# TODO(fahrbach): pass in important parameters by flags
+output_file = None
 
 def tensor_index_to_vec_index(tensor_index, shape):
     return np.ravel_multi_index(tensor_index, shape)
@@ -113,6 +115,21 @@ def update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization, d
                     design_matrix_col_T_2 = np.kron(design_matrix_col_T_1, factor_matrix_col_T_2)
                     b[row_index] = design_matrix_col_T_2 @ Y_vec
                     row_index += 1
+    elif X_tucker.core.ndim == 4:
+        for core_index_0 in range(X_tucker.core.shape[0]):
+            factor_matrix_col_T_0 = X_tucker.factors[0][:,core_index_0].T
+            design_matrix_col_T_0 = factor_matrix_col_T_0
+            for core_index_1 in range(X_tucker.core.shape[1]):
+                factor_matrix_col_T_1 = X_tucker.factors[1][:,core_index_1].T
+                design_matrix_col_T_1 = np.kron(design_matrix_col_T_0, factor_matrix_col_T_1)
+                for core_index_2 in range(X_tucker.core.shape[2]):
+                    factor_matrix_col_T_2 = X_tucker.factors[2][:,core_index_2].T
+                    design_matrix_col_T_2 = np.kron(design_matrix_col_T_1, factor_matrix_col_T_2)
+                    for core_index_3 in range(X_tucker.core.shape[3]):
+                        factor_matrix_col_T_3 = X_tucker.factors[3][:,core_index_3].T
+                        design_matrix_col_T_3 = np.kron(design_matrix_col_T_2, factor_matrix_col_T_3)
+                        b[row_index] = design_matrix_col_T_3 @ Y_vec
+                        row_index += 1
     else:
         print('Core tensor of order', X_tucker.core.ndim, 'not supported.')
         assert(False)
@@ -147,11 +164,7 @@ def write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization, 
             f.write(' '.join(str(_) for _ in factor_info) + '\n')
             f.write(' '.join(str(score) for score in leverage_scores[n]) + '\n')
 
-def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization, step, debug_mode):
-    epsilon = 0.5
-    delta = 0.1
-    alpha = 0.001  # Further downsampling factor to see when we lose solve quality.
-
+def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization, step, epsilon, delta, downsampling_ratio, debug_mode):
     start_time = time.time()
     leverage_scores = [compute_ridge_leverage_scores(factor, 0.0) for factor in X_tucker.factors]
     end_time = time.time()
@@ -169,7 +182,7 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization, st
         num_core_elements *= dimension
 
     start_time = time.time()
-    write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization, epsilon, delta, step, alpha)
+    write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization, epsilon, delta, step, downsampling_ratio)
     cmd = './row_sampling'
     os.system(cmd)
     end_time = time.time()
@@ -238,7 +251,9 @@ def compute_loss(Y_tensor, X_tucker, l2_regularization):
     return loss
 
 def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
-        algorithm, num_steps, debug_mode):
+        algorithm, num_steps, epsilon, delta, downsampling_ratio, debug_mode):
+    global output_file
+
     num_elements = 1
     for n in X_tucker.shape:
         num_elements *= n
@@ -246,6 +261,9 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
 
     for step in range(num_steps):
         print('step:', step)
+        output_file.write('step: ' + str(step) + '\n')
+        output_file.flush()
+
         # --------------------------------------------------------------------------
         # Factor matrix updates.
         for factor_index in range(X_tucker.core.ndim):
@@ -258,8 +276,11 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
             new_loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
             rmse = (new_loss / num_elements)**0.5
             print('loss: {} RMSE: {} time: {}'.format(new_loss, rmse, end_time - start_time))
+            output_file.write('loss: {} RMSE: {} time: {}'.format(new_loss, rmse, end_time - start_time) + '\n')
             if debug_mode and new_loss > loss:
                 print('Warning: The loss function increased!')
+                output_file.write('Warning: The loss function increased!\n')
+            output_file.flush()
             loss = new_loss
         
         # --------------------------------------------------------------------------
@@ -269,8 +290,8 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
         start_time = time.time()
         if algorithm == 'ALS':
             update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization, debug_mode)
-        elif algorithm == 'ALS_row_sampling':
-            update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization, step, debug_mode)
+        elif algorithm == 'ALS-RS':
+            update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization, step, epsilon, delta, downsampling_ratio, debug_mode)
         else:
             print('algorithm:', algorithm, 'is unsupported.')
             assert(False)
@@ -279,14 +300,17 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
         new_loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
         rmse = (new_loss / num_elements)**0.5
         print('loss: {} RMSE: {} time: {}'.format(new_loss, rmse, end_time - start_time))
+        output_file.write('loss: {} RMSE: {} time: {}'.format(new_loss, rmse, end_time - start_time) + '\n')
         if debug_mode and new_loss > loss:
             print('Warning: The loss function increased!')
+            output_file.write('Warning: The loss function increased!\n')
+        output_file.flush()
         loss = new_loss
         print()
 
 # Simple tensor decomposition experiment that uses alternating least squares to
 # decompose a tensor Y generated from a random Tucker decomposition.
-def main():
+def old_main():
     shape = (1000, 1000, 40)
     rank = (10, 20, 2)
     l2_regularization = 0.01
@@ -318,5 +342,69 @@ def main():
     print('algorithm:', algorithm)
     print()
     run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, algorithm, num_steps, debug_mode)
+
+def create_output_filename(input_filename, algorithm, rank, steps):
+    # Remove "data/" prefix.
+    name = input_filename[5:].split('.')[0]
+    output_filename = 'output/' + name
+    output_filename += '_' + algorithm
+    output_filename += '_' + ','.join([str(x) for x in rank])
+    output_filename += '_' + str(steps)
+    output_filename += '.txt'
+    return output_filename
+
+def run_cardiac_mri_experiment():
+    input_filename = 'data/Cardiac_MRI_data/sol_yxzt_pat1.mat'
+    Y = sio.loadmat(input_filename)['sol_yxzt']
+
+    algorithm = 'ALS'
+    #algorithm = 'ALS-RS'
+    rank = (4, 4, 2, 2)
+    seed = 0
+    l2_regularization = 0.001
+    steps = 10
+    epsilon = 0.5
+    delta = 0.1
+    downsampling_ratio = 0.001
+
+    global output_file
+    output_filename = create_output_filename(input_filename, algorithm, rank, steps)
+    output_file = open(output_filename, 'a')
+
+    output_file.write('##############################################\n')
+    print('input_filename: ', input_filename)
+    output_file.write('input_filename: ' + input_filename + '\n')
+
+    print('Y.shape: ', Y.shape)
+    output_file.write('Y.shape: ' + str(Y.shape) + '\n')
+
+    print('rank: ', rank)
+    output_file.write('rank: ' + str(rank) + '\n')
+    print('seed: ', seed)
+    output_file.write('seed: ' + str(seed) + '\n')
+    print('algorithm: ', algorithm)
+    output_file.write('algorithm: ' + str(algorithm) + '\n')
+    print('l2_regularization: ', l2_regularization)
+    output_file.write('l2_regularization: ' + str(l2_regularization) + '\n')
+    print('steps: ', steps)
+    output_file.write('steps: ' + str(steps) + '\n')
+    print('epsilon: ', epsilon)
+    output_file.write('epsilon: ' + str(epsilon) + '\n')
+    print('delta: ', delta)
+    output_file.write('delta: ' + str(delta) + '\n')
+    print('downsampling_ratio: ', downsampling_ratio)
+    output_file.write('downsampling_ratio: ' + str(downsampling_ratio) + '\n')
+    output_file.flush()
+
+    X_tucker = random_tucker(Y.shape, rank, random_state=seed)
+    if algorithm in ['ALS', 'ALS-RS']:
+        run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm, steps, epsilon, delta, downsampling_ratio, True)
+        run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm, steps, epsilon, delta, downsampling_ratio, True)
+
+    X = tl.tucker_to_tensor(X_tucker)
+    print(X)
+
+def main():
+    run_cardiac_mri_experiment()
 
 main()
