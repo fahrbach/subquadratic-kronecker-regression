@@ -324,6 +324,8 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
 #   that it can't be fit perfectly.
 # - Then we generate a new random Tucker decomposition X (using a different
 #   seed), and we try to learn Y.
+# - Note: We start to see nice gains from ALG-RS when the tensor has shape
+#   ~(1028, 1028, 512) and the rank is (4, 4, 4).
 # ==============================================================================
 def run_synthetic_experiment_1():
     shape = (1028, 512, 512)
@@ -334,8 +336,8 @@ def run_synthetic_experiment_1():
     epsilon = 0.1
     delta = 0.1
     downsampling_ratio = 1.0
-    #algorithm = 'ALS'
-    algorithm = 'ALS-RS'
+    algorithm = 'ALS'
+    #algorithm = 'ALS-RS'
 
     global output_file
     output_filename = 'output/synthetic-1/synthetic-1'
@@ -384,6 +386,75 @@ def run_synthetic_experiment_1():
     X = tl.tucker_to_tensor(X_tucker)
     print(X)
 
+# ==============================================================================
+# Synthetic Shapes Experiment:
+# - Use Tensorly's built-in shape images.
+# - Note: This data can easily scale up, and starts to show the benefit of
+#   row sampling. For example, create a shape of dimensions [1024, 1024, 3]
+#   and rank [4, 4, 3]. Observe that it's only sampling about 0.1% of the rows.
+# ==============================================================================
+def run_synthetic_shapes_experiment():
+    pattern = 'circle' # ['rectangle', 'swiss', 'circle']
+    n = 2048
+    rank = [4, 4, 2]
+    steps = 10
+    l2_regularization = 0.001
+    seed = 0
+    epsilon = 0.1
+    delta = 0.1
+    downsampling_ratio = 1.0
+    algorithm = 'ALS-RS'
+    #algorithm = 'ALS-RS'
+
+    global output_file
+    output_filename = 'output/synthetic-shapes/synthetic_shapes'
+    output_filename += '_' + pattern
+    output_filename += '_' + str(n)
+    output_filename += '_' + ','.join([str(x) for x in rank])
+    output_filename += '_' + algorithm
+    output_filename += '.txt'
+
+    output_file = open(output_filename, 'a')
+
+    output_file.write('##############################################\n')
+
+    # Initialize target tensor Y.
+    Y = tl.datasets.synthetic.gen_image(pattern, n, n, 3)
+    plt.imshow(Y)
+    plt.show()
+
+    print('Y.shape: ', Y.shape)
+    output_file.write('Y.shape: ' + str(Y.shape) + '\n')
+
+    print('n: ', n)
+    output_file.write('rank: ' + str(rank) + '\n')
+    print('rank: ', rank)
+    output_file.write('rank: ' + str(rank) + '\n')
+    print('seed: ', seed)
+    output_file.write('seed: ' + str(seed) + '\n')
+    print('l2_regularization: ', l2_regularization)
+    output_file.write('l2_regularization: ' + str(l2_regularization) + '\n')
+    print('steps: ', steps)
+    output_file.write('steps: ' + str(steps) + '\n')
+    print('epsilon: ', epsilon)
+    output_file.write('epsilon: ' + str(epsilon) + '\n')
+    print('delta: ', delta)
+    output_file.write('delta: ' + str(delta) + '\n')
+    print('downsampling_ratio: ', downsampling_ratio)
+    output_file.write('downsampling_ratio: ' + str(downsampling_ratio) + '\n')
+    print('algorithm: ', algorithm)
+    output_file.write('algorithm: ' + str(algorithm) + '\n')
+    output_file.flush()
+
+    X_tucker = random_tucker(Y.shape, rank, random_state=seed)
+    if algorithm in ['ALS', 'ALS-RS']:
+        os.system('g++-10 -O2 -std=c++11 row_sampling.cc -o row_sampling')
+        run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm, steps, epsilon, delta, downsampling_ratio, True)
+    
+    X = tl.tucker_to_tensor(X_tucker)
+    plt.imshow(X)
+    plt.show()
+
 def create_output_filename(input_filename, algorithm, rank, steps):
     # Remove "data/" prefix.
     name = input_filename[5:].split('.')[0]
@@ -408,10 +479,10 @@ def run_cardiac_mri_experiment():
     rank = (4, 4, 2, 2)
     seed = 0
     l2_regularization = 0.001
-    steps = 10
-    epsilon = 0.5
+    steps = 3
+    epsilon = 0.1
     delta = 0.1
-    downsampling_ratio = 0.001
+    downsampling_ratio = 1.0
 
     global output_file
     output_filename = create_output_filename(input_filename, algorithm, rank, steps)
@@ -450,8 +521,75 @@ def run_cardiac_mri_experiment():
     X = tl.tucker_to_tensor(X_tucker)
     print(X)
 
+# ==============================================================================
+# Image Experiments
+# - Reads an image as a 3-way tensor (x, y, RGB channel), and 
+# ==============================================================================
+def run_image_experiment():
+    input_filename = 'data/images/nyc.jpg'
+
+    dimensions = [1024, 1024, 3]
+    rank = [4, 4, 2]
+    seed = 0
+    l2_regularization = 0.001
+    steps = 10
+    epsilon = 0.1
+    delta = 0.1
+    downsampling_ratio = 1.0
+    algorithm = 'ALS-RS'
+    #algorithm = 'ALS'
+
+    global output_file
+    output_filename = create_output_filename(input_filename, algorithm, rank, steps)
+    output_file = open(output_filename, 'a')
+
+    output_file.write('##############################################\n')
+    print('input_filename: ', input_filename)
+    output_file.write('input_filename: ' + input_filename + '\n')
+
+    # Read and resize the input image.
+    image = Image.open(input_filename)
+    image = image.resize((dimensions[0], dimensions[1]), Image.ANTIALIAS)
+    Y = np.array(image) / 256
+    print(Y)
+    plt.imshow(Y)
+    plt.show()
+
+    print('Y.shape: ', Y.shape)
+    output_file.write('Y.shape: ' + str(Y.shape) + '\n')
+
+    print('rank: ', rank)
+    output_file.write('rank: ' + str(rank) + '\n')
+    print('seed: ', seed)
+    output_file.write('seed: ' + str(seed) + '\n')
+    print('algorithm: ', algorithm)
+    output_file.write('algorithm: ' + str(algorithm) + '\n')
+    print('l2_regularization: ', l2_regularization)
+    output_file.write('l2_regularization: ' + str(l2_regularization) + '\n')
+    print('steps: ', steps)
+    output_file.write('steps: ' + str(steps) + '\n')
+    print('epsilon: ', epsilon)
+    output_file.write('epsilon: ' + str(epsilon) + '\n')
+    print('delta: ', delta)
+    output_file.write('delta: ' + str(delta) + '\n')
+    print('downsampling_ratio: ', downsampling_ratio)
+    output_file.write('downsampling_ratio: ' + str(downsampling_ratio) + '\n')
+    output_file.flush()
+
+    X_tucker = random_tucker(Y.shape, rank, random_state=seed)
+    if algorithm in ['ALS', 'ALS-RS']:
+        os.system('g++-10 -O2 -std=c++11 row_sampling.cc -o row_sampling')
+        run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm, steps, epsilon, delta, downsampling_ratio, True)
+
+    X = tl.tucker_to_tensor(X_tucker)
+    #print(X)
+    plt.imshow(X)
+    plt.show()
+
 def main():
-    run_synthetic_experiment_1()
+    #run_synthetic_experiment_1()
+    run_synthetic_shapes_experiment()
     #run_cardiac_mri_experiment()
+    #run_image_experiment()
 
 main()

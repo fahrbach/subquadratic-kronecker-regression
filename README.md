@@ -3,7 +3,7 @@
 # Instructions
 - Make sure that `row_sampling.cc` is compiled as the executable `row_sampling`
 - Then run the following command:
-$ python3 tucker_main.py
+`$ python3 tucker_main.py`
 
 # Experiments
 
@@ -25,4 +25,11 @@ Input: The data should be organized as:
 
 Output: Expects that the following directory exists:
 - ./output/Cardiac_MRI_data/
+
+## Images
+Input: The data should be organized as:
+- ./data/images/nyc.jpg
+
+Output: Expects that the following directory exists:
+- ./output/images/
 
