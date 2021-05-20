@@ -394,6 +394,11 @@ def create_output_filename(input_filename, algorithm, rank, steps):
     output_filename += '.txt'
     return output_filename
 
+# ==============================================================================
+# Cardiac MRI Experiment:
+# - Read 4-way tensor with shape (256, 256, 14, 20), which corresponds to
+#   positions (x, y, z, time), and run ALS with and without row sampling.
+# ==============================================================================
 def run_cardiac_mri_experiment():
     input_filename = 'data/Cardiac_MRI_data/sol_yxzt_pat1.mat'
     Y = sio.loadmat(input_filename)['sol_yxzt']
