@@ -368,7 +368,7 @@ def run_synthetic_experiment_1():
                     index = np.random.randint(0, num_elements)
                     coords = vec_index_to_tensor_index(index, shape)
                     #print(index, coords)
-                    Y[coords] = 0.0
+                    Y[coords] += np.random.normal(0, 1)
 
                 print('Y.shape: ', Y.shape)
                 output_file.write('Y.shape: ' + str(Y.shape) + '\n')
