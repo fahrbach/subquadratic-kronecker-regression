@@ -1,5 +1,7 @@
 import numpy as np
 import tensorly as tl
+from tensorly.decomposition import parafac
+from tensorly.decomposition import tucker
 from tensorly.datasets import synthetic
 from tensorly.random import random_tucker
 import os
@@ -613,16 +615,17 @@ def run_image_experiment():
 
 # ==============================================================================
 # Video Experiments
-# - Reads an image as a 3-way tensor (x, y, RGB channel), and
+# - Reads an video as a 4-way tensor (time, x, y, RGB channel), and
 # ==============================================================================
 def run_video_experiment():
     input_filename = 'data/video/walking_past_camera.mp4'
 
     dimensions = [2493, 1080, 1920, 3]
-    rank = [4, 4, 2, 2]
+    rank = [4, 4, 4, 2]
+
     seed = 0
     l2_regularization = 0.001
-    steps = 10
+    steps = 5
     epsilon = 0.1
     delta = 0.1
     downsampling_ratio = 1.0
@@ -641,8 +644,15 @@ def run_video_experiment():
     # Read and resize the input image.
     video = skvideo.io.vread(input_filename)
 
+    print('Tucker ...')
+    # core, factors = tucker(video, rank=rank, init='random', tol=1e-5)
+    # print('core', core.shape)
+    # print('factors', len(factors))
+
     Y = np.array(video) / 256
-    print('Y.shape: ', Y.shape)
+    print('Original Y.shape: ', Y.shape)
+    Y = Y[0:100, :, :, :]
+    print('New Y.shape: ', Y.shape)
     output_file.write('Y.shape: ' + str(Y.shape) + '\n')
 
     print('rank: ', rank)
@@ -668,12 +678,6 @@ def run_video_experiment():
         os.system('g++-10 -O2 -std=c++11 row_sampling.cc -o row_sampling')
         run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm, steps, epsilon, delta,
                                       downsampling_ratio, True)
-
-    X = tl.tucker_to_tensor(X_tucker)
-    # print(X)
-    plt.imshow(X)
-    plt.show()
-
 
 def main():
     # run_synthetic_experiment_1()
