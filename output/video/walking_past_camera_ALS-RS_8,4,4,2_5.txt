@@ -1,0 +1,15 @@
+##############################################
+input_filename: data/video/walking_past_camera.mp4
+Y.shape: (100, 1080, 1920, 3)
+rank: [8, 4, 4, 2]
+seed: 0
+algorithm: ALS-RS
+l2_regularization: 0.001
+steps: 5
+epsilon: 0.1
+delta: 0.1
+downsampling_ratio: 1.0
+step: 0
+loss: 76293841.84440142 RMSE: 0.35020441984781353 time: 13.56128740310669
+loss: 43036673.8268885 RMSE: 0.2630245158551904 time: 3.6438100337982178
+loss: 24376679.024175655 RMSE: 0.1979539398957273 time: 8.770937204360962
