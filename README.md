@@ -3,33 +3,21 @@
 # Instructions
 - Make sure that `row_sampling.cc` is compiled as the executable `row_sampling`
 - Then run the following command:
-`$ python3 tucker_main.py`
+`$ python3 all_tucker_main.py`
 
 # Experiments
 
-## Synthetic 1
+## Synthetic
 Input: None
 
 Output: Expects that the following directory exists:
-- ./output/synthetic-1/
+- ./output/synthetic-all/
 
-## Synthetic Shapes
-Input: None
-
-Output: Expects that the following directory exists:
-- ./output/synthetic-shapes/
-
-## Cardiac MRI
+## Video
 Input: The data should be organized as:
-- ./data/Cardiac_MRI_data/sol_yxzt_pat1.mat
+- ./data/video/walking_past_camera.mp4
+- pip install sk-videoSource: https://github.com/OsmanMalik/tucker-tensorsketch
 
 Output: Expects that the following directory exists:
-- ./output/Cardiac_MRI_data/
-
-## Images
-Input: The data should be organized as:
-- ./data/images/nyc.jpg
-
-Output: Expects that the following directory exists:
-- ./output/images/
+- ./output/video/
 
