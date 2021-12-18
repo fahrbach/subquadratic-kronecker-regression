@@ -11,6 +11,8 @@ from PIL import Image
 import scipy.io as sio
 import skvideo.io
 
+from tensor_data_handler import TensorDataHandler
+
 # Global variable since all ALS subroutines log to this file.
 output_file = None
 
@@ -274,6 +276,11 @@ def compute_loss(Y_tensor, X_tucker, l2_regularization):
     return loss
 
 
+def compute_fitness(Y_tensor, X_tucker):
+    residual_vec = tl.tensor_to_vec(Y_tensor - tl.tucker_to_tensor(X_tucker))
+    return 1.0 - np.linalg.norm(residual_vec) / np.linalg.norm(tl.tensor_to_vec(Y_tensor))
+
+
 def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
                                   algorithm, num_steps, epsilon, delta, downsampling_ratio, debug_mode):
     global output_file
@@ -299,8 +306,9 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
 
             new_loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
             rmse = (new_loss / num_elements) ** 0.5
-            print('loss: {} RMSE: {} time: {}'.format(new_loss, rmse, end_time - start_time))
-            output_file.write('loss: {} RMSE: {} time: {}'.format(new_loss, rmse, end_time - start_time) + '\n')
+            fitness = compute_fitness(Y_tensor, X_tucker)
+            print('loss: {} RMSE: {} fitness: {} time: {}'.format(new_loss, rmse, fitness, end_time - start_time))
+            output_file.write('loss: {} RMSE: {} fitness: {} time: {}'.format(new_loss, rmse, fitness, end_time - start_time) + '\n')
             if debug_mode and new_loss > loss:
                 print('Warning: The loss function increased!')
                 output_file.write('Warning: The loss function increased!\n')
@@ -325,14 +333,29 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
 
         new_loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
         rmse = (new_loss / num_elements) ** 0.5
-        print('loss: {} RMSE: {} time: {}'.format(new_loss, rmse, end_time - start_time))
-        output_file.write('loss: {} RMSE: {} time: {}'.format(new_loss, rmse, end_time - start_time) + '\n')
+        fitness = compute_fitness(Y_tensor, X_tucker)
+        print('loss: {} RMSE: {} fitness: {} time: {}'.format(new_loss, rmse, fitness, end_time - start_time))
+        output_file.write('loss: {} RMSE: {} fitness: {} time: {}'.format(new_loss, rmse, fitness, end_time - start_time) + '\n')
         if debug_mode and new_loss > loss:
             print('Warning: The loss function increased!')
             output_file.write('Warning: The loss function increased!\n')
         output_file.flush()
         loss = new_loss
         print()
+
+# Creates output filename based on input algorithm parameters, makes output path
+# if it doesn't already exist, and initializes global `output_file` variable.
+def init_output_file(output_filepath_prefix, algorithm, rank, steps):
+    global output_file
+
+    output_filename = output_filepath_prefix
+    output_filename += '_' + algorithm
+    output_filename += '_' + ','.join([str(x) for x in rank])
+    output_filename += '_' + str(steps)
+    output_filename += '.txt'
+
+    os.makedirs(os.path.dirname(output_filename), exist_ok=True)
+    output_file = open(output_filename, 'a')
 
 # ==============================================================================
 # Synthetic Experiment 1:
@@ -345,8 +368,8 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
 #   ~(1028, 1028, 512) and the rank is (4, 4, 4).
 # ==============================================================================
 def run_synthetic_experiment_1():
-    shape = (1028, 512, 512)
-    rank = (8, 4, 2)
+    shape = (512, 512, 512)
+    rank = (4, 4, 2)
     steps = 10
     l2_regularization = 0.001
     seed = 0
@@ -414,31 +437,30 @@ def run_synthetic_experiment_1():
 # ==============================================================================
 def run_synthetic_shapes_experiment():
     pattern = 'circle'  # ['rectangle', 'swiss', 'circle']
-    n = 2048
-    rank = [4, 4, 2]
+    n = 100
+    rank = [10, 10, 2]
     steps = 10
     l2_regularization = 0.001
     seed = 0
     epsilon = 0.1
     delta = 0.1
     downsampling_ratio = 1.0
-    algorithm = 'ALS-RS'
+    algorithm = 'ALS'
     # algorithm = 'ALS-RS'
 
-    global output_file
-    output_filename = 'output/synthetic-shapes/synthetic_shapes'
-    output_filename += '_' + pattern
-    output_filename += '_' + str(n)
-    output_filename += '_' + ','.join([str(x) for x in rank])
-    output_filename += '_' + algorithm
-    output_filename += '.txt'
+    data_handler = TensorDataHandler()
+    data_handler.load_synthetic_shape(pattern, n, n, 3)
 
-    output_file = open(output_filename, 'a')
+    global output_file
+
+    output_filename_prefix = data_handler.output_filename_prefix
+    output_filename_prefix += '_' + str(n)
+    init_output_file(output_filename_prefix, algorithm, rank, steps)
 
     output_file.write('##############################################\n')
 
     # Initialize target tensor Y.
-    Y = tl.datasets.synthetic.gen_image(pattern, n, n, 3)
+    Y = data_handler.tensor
     plt.imshow(Y)
     plt.show()
 
@@ -474,22 +496,6 @@ def run_synthetic_shapes_experiment():
     X = tl.tucker_to_tensor(X_tucker)
     plt.imshow(X)
     plt.show()
-
-# Creates output filename based on input algorithm parameters, makes output path
-# if it doesn't already exist, and initializes global `output_file` variable.
-def init_output_file(input_filename, algorithm, rank, steps):
-    global output_file
-
-    # Remove "data/" prefix.
-    name = input_filename[5:].split('.')[0]
-    output_filename = 'output/' + name
-    output_filename += '_' + algorithm
-    output_filename += '_' + ','.join([str(x) for x in rank])
-    output_filename += '_' + str(steps)
-    output_filename += '.txt'
-
-    os.makedirs(os.path.dirname(output_filename), exist_ok=True)
-    output_file = open(output_filename, 'a')
 
 # ==============================================================================
 # Cardiac MRI Experiment:
@@ -553,34 +559,34 @@ def run_cardiac_mri_experiment():
 # - Reads an image as a 3-way tensor (x, y, RGB channel), and 
 # ==============================================================================
 def run_image_experiment():
-    input_filename = 'data/images/nyc.jpg'
+    data_handler = TensorDataHandler()
+    data_handler.load_image('data/images/nyc.jpg', resize_shape=(512, 512))
 
-    dimensions = [1024, 1024, 3]
-    rank = [4, 4, 2]
+    dimensions = [512, 512, 3]
+    rank = [4, 4, 3]
     seed = 0
     l2_regularization = 0.001
-    steps = 10
+    steps = 2
     epsilon = 0.1
     delta = 0.1
     downsampling_ratio = 1.0
     algorithm = 'ALS-RS'
-    # algorithm = 'ALS'
+    #algorithm = 'ALS'
 
     global output_file
-    init_output_file(input_filename, algorithm, rank, steps)
+    init_output_file(data_handler.output_filename_prefix, algorithm, rank, steps)
 
     output_file.write('##############################################\n')
-    print('input_filename: ', input_filename)
-    output_file.write('input_filename: ' + input_filename + '\n')
+    print('input_filename: ', data_handler.input_filename)
+    output_file.write('input_filename: ' + data_handler.input_filename + '\n')
 
-    # Read and resize the input image.
-    image = Image.open(input_filename)
-    image = image.resize((dimensions[0], dimensions[1]), Image.ANTIALIAS)
-    Y = np.array(image) / 256
-    print(Y)
+    Y = data_handler.tensor
+    #print(Y)
     plt.imshow(Y)
     plt.show()
 
+    print('Y.size:', Y.size)
+    output_file.write('Y.size: ' + str(Y.size) + '\n')
     print('Y.shape: ', Y.shape)
     output_file.write('Y.shape: ' + str(Y.shape) + '\n')
 
@@ -600,19 +606,29 @@ def run_image_experiment():
     output_file.write('delta: ' + str(delta) + '\n')
     print('downsampling_ratio: ', downsampling_ratio)
     output_file.write('downsampling_ratio: ' + str(downsampling_ratio) + '\n')
+
+    # Compression factor
+    tucker_size = 0
+    core_size = 1
+    for i in range(len(dimensions)):
+        tucker_size += dimensions[i] * rank[i]
+        core_size *= rank[i]
+    tucker_size += core_size
+    print('tucker_size:', tucker_size)
+    output_file.write('tucker_size: ' + str(tucker_size) + '\n')
+    compression_factor = Y.size / tucker_size
+    print('compression_factor:', compression_factor)
+    output_file.write('compression_factor: ' + str(compression_factor) + '\n')
     output_file.flush()
 
     X_tucker = random_tucker(Y.shape, rank, random_state=seed)
-    if algorithm in ['ALS', 'ALS-RS']:
-        os.system('g++-10 -O2 -std=c++11 row_sampling.cc -o row_sampling')
-        run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm, steps, epsilon, delta,
-                                      downsampling_ratio, True)
+    run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm,
+            steps, epsilon, delta, downsampling_ratio, True)
 
     X = tl.tucker_to_tensor(X_tucker)
     # print(X)
     plt.imshow(X)
     plt.show()
-
 
 # ==============================================================================
 # Video Experiments
@@ -680,9 +696,9 @@ def run_video_experiment():
 
 def main():
     # run_synthetic_experiment_1()
-    # run_synthetic_shapes_experiment()
+    run_synthetic_shapes_experiment()
     # run_cardiac_mri_experiment()
-    run_image_experiment()
+    # run_image_experiment()
     # run_video_experiment()
 
 
