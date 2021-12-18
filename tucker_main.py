@@ -31,6 +31,34 @@ def solve_least_squares(A, b, l2_regularization):
     Atb = A.T @ b
     return np.linalg.solve(AtA_lambda, Atb)
 
+# TODO(fahrbach): Describe. Returns (A_1 \ktimes ... \ktimes A_N) @ B
+def kron_mat_mult(kroneckor_matrices, matrix):
+    if len(matrix.shape) == 1:
+        matrix = np.reshape(matrix, (len(matrix), 1))
+    mat_shape = np.shape(matrix)
+    num_mats = len(kroneckor_matrices)
+    num_rows_kron_mats = np.zeros((num_mats), dtype=np.int32)
+    num_cols_kron_mats = np.zeros((num_mats), dtype=np.int32)
+    for i in range(num_mats):
+        num_rows_kron_mats[i] = np.shape(kroneckor_matrices[i])[0]
+        num_cols_kron_mats[i] = np.shape(kroneckor_matrices[i])[1]
+    vec_size = np.prod(num_cols_kron_mats)
+    if vec_size != mat_shape[0]:
+        raise ValueError(
+            'The number of columns of the Kronecker product should match ' +
+            'the number of rows in the matrix.')
+    output = matrix
+    for j in range(num_mats - 1, -1, -1):
+        output = np.reshape(output, (num_cols_kron_mats[j], mat_shape[1] * vec_size // num_cols_kron_mats[j]), 'F')
+        output = np.matmul(kroneckor_matrices[j], output)
+        vec_size = vec_size * num_rows_kron_mats[j] // num_cols_kron_mats[j]
+        output = np.reshape(output, (num_rows_kron_mats[j], mat_shape[1],
+            vec_size // num_rows_kron_mats[j]))
+        output = np.transpose(
+            np.reshape(np.moveaxis(output, [0, 1, 2], [1, 0, 2]),
+                (mat_shape[1], vec_size)))
+    return output
+
 
 ## Factor matrix updates -------------------------------------------------------
 
@@ -110,47 +138,7 @@ def update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization, d
     # Python loop slowdowns. Is it possible to only use NumPY operations without
     # using too much memory?
     start_time = time.time()
-    if X_tucker.core.ndim == 2:
-        for core_index_0 in range(X_tucker.core.shape[0]):
-            factor_matrix_col_T_0 = X_tucker.factors[0][:, core_index_0].T
-            design_matrix_col_T_0 = factor_matrix_col_T_0
-            for core_index_1 in range(X_tucker.core.shape[1]):
-                factor_matrix_col_T_1 = X_tucker.factors[1][:, core_index_1].T
-                design_matrix_col_T_1 = np.kron(design_matrix_col_T_0, factor_matrix_col_T_1)
-                b[row_index] = design_matrix_col_T_1 @ Y_vec
-                row_index += 1
-
-    elif X_tucker.core.ndim == 3:
-        for core_index_0 in range(X_tucker.core.shape[0]):
-            factor_matrix_col_T_0 = X_tucker.factors[0][:, core_index_0].T
-            design_matrix_col_T_0 = factor_matrix_col_T_0
-            for core_index_1 in range(X_tucker.core.shape[1]):
-                factor_matrix_col_T_1 = X_tucker.factors[1][:, core_index_1].T
-                design_matrix_col_T_1 = np.kron(design_matrix_col_T_0, factor_matrix_col_T_1)
-                for core_index_2 in range(X_tucker.core.shape[2]):
-                    factor_matrix_col_T_2 = X_tucker.factors[2][:, core_index_2].T
-                    design_matrix_col_T_2 = np.kron(design_matrix_col_T_1, factor_matrix_col_T_2)
-                    b[row_index] = design_matrix_col_T_2 @ Y_vec
-                    row_index += 1
-
-    elif X_tucker.core.ndim == 4:
-        for core_index_0 in range(X_tucker.core.shape[0]):
-            factor_matrix_col_T_0 = X_tucker.factors[0][:, core_index_0].T
-            design_matrix_col_T_0 = factor_matrix_col_T_0
-            for core_index_1 in range(X_tucker.core.shape[1]):
-                factor_matrix_col_T_1 = X_tucker.factors[1][:, core_index_1].T
-                design_matrix_col_T_1 = np.kron(design_matrix_col_T_0, factor_matrix_col_T_1)
-                for core_index_2 in range(X_tucker.core.shape[2]):
-                    factor_matrix_col_T_2 = X_tucker.factors[2][:, core_index_2].T
-                    design_matrix_col_T_2 = np.kron(design_matrix_col_T_1, factor_matrix_col_T_2)
-                    for core_index_3 in range(X_tucker.core.shape[3]):
-                        factor_matrix_col_T_3 = X_tucker.factors[3][:, core_index_3].T
-                        design_matrix_col_T_3 = np.kron(design_matrix_col_T_2, factor_matrix_col_T_3)
-                        b[row_index] = design_matrix_col_T_3 @ Y_vec
-                        row_index += 1
-    else:
-        print('Core tensor of order', X_tucker.core.ndim, 'not supported.')
-        assert (False)
+    b = kron_mat_mult([f.T for f in X_tucker.factors], Y_vec)
     end_time = time.time()
     if debug_mode:
         print(' - Ktb construction time:', end_time - start_time)
@@ -280,10 +268,10 @@ def compute_loss(Y_tensor, X_tucker, l2_regularization):
         loss += l2_regularization * np.linalg.norm(X_tucker.factors[n]) ** 2
     return loss
 
-
+# Relative residual error.
 def compute_fitness(Y_tensor, X_tucker):
     residual_vec = tl.tensor_to_vec(Y_tensor - tl.tucker_to_tensor(X_tucker))
-    return 1.0 - np.linalg.norm(residual_vec) / np.linalg.norm(tl.tensor_to_vec(Y_tensor))
+    return np.linalg.norm(residual_vec) / np.linalg.norm(tl.tensor_to_vec(Y_tensor))
 
 
 def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
@@ -326,7 +314,7 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
             print('Updating core tensor:')
         start_time = time.time()
         if algorithm == 'ALS':
-            # update_core_tensor_naive(X_tucker, Y_tensor, l2_regularization)
+            #update_core_tensor_naive(X_tucker, Y_tensor, l2_regularization)
             update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization, debug_mode)
         elif algorithm == 'ALS-RS':
             update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization, step, epsilon, delta,
@@ -562,18 +550,18 @@ def run_cardiac_mri_experiment():
 # ==============================================================================
 def run_image_experiment():
     data_handler = TensorDataHandler()
-    data_handler.load_image('data/images/nyc.jpg', resize_shape=(230, 307))
+    data_handler.load_image('data/images/nyc.jpg', resize_shape=(512, 512))
 
-    dimensions = [230, 307, 3]
-    rank = [10, 10, 2]
+    dimensions = [512, 512, 3]
+    rank = [4, 4, 2]
     seed = 0
     l2_regularization = 0.001
     steps = 10
     epsilon = 0.1
     delta = 0.1
     downsampling_ratio = 1.0
-    algorithm = 'ALS-RS'
-    #algorithm = 'ALS'
+    #algorithm = 'ALS-RS'
+    algorithm = 'ALS'
 
     global output_file
     init_output_file(data_handler.output_filename_prefix, algorithm, rank, steps)
