@@ -10,14 +10,12 @@
 ## Synthetic
 Input: None
 
-Output: Expects that the following directory exists:
-- ./output/synthetic-all/
+Output: Appears in `./output/`.
 
 ## Video
 Input: The data should be organized as:
 - ./data/video/walking_past_camera.mp4
 - pip install sk-videoSource: https://github.com/OsmanMalik/tucker-tensorsketch
 
-Output: Expects that the following directory exists:
-- ./output/video/
+Output: Appears in `./output/video/`.
 

@@ -11,8 +11,8 @@ from PIL import Image
 import scipy.io as sio
 import skvideo.io
 
+# Global variable since all ALS subroutines log to this file.
 output_file = None
-
 
 def tensor_index_to_vec_index(tensor_index, shape):
     return np.ravel_multi_index(tensor_index, shape)
@@ -334,7 +334,6 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
         loss = new_loss
         print()
 
-
 # ==============================================================================
 # Synthetic Experiment 1:
 # - Simple tensor decomposition experiment where a tensor Y is randomly generated
@@ -476,8 +475,11 @@ def run_synthetic_shapes_experiment():
     plt.imshow(X)
     plt.show()
 
+# Creates output filename based on input algorithm parameters, makes output path
+# if it doesn't already exist, and initializes global `output_file` variable.
+def init_output_file(input_filename, algorithm, rank, steps):
+    global output_file
 
-def create_output_filename(input_filename, algorithm, rank, steps):
     # Remove "data/" prefix.
     name = input_filename[5:].split('.')[0]
     output_filename = 'output/' + name
@@ -485,8 +487,9 @@ def create_output_filename(input_filename, algorithm, rank, steps):
     output_filename += '_' + ','.join([str(x) for x in rank])
     output_filename += '_' + str(steps)
     output_filename += '.txt'
-    return output_filename
 
+    os.makedirs(os.path.dirname(output_filename), exist_ok=True)
+    output_file = open(output_filename, 'a')
 
 # ==============================================================================
 # Cardiac MRI Experiment:
@@ -508,8 +511,7 @@ def run_cardiac_mri_experiment():
     downsampling_ratio = 1.0
 
     global output_file
-    output_filename = create_output_filename(input_filename, algorithm, rank, steps)
-    output_file = open(output_filename, 'a')
+    init_output_file(input_filename, algorithm, rank, steps)
 
     output_file.write('##############################################\n')
     print('input_filename: ', input_filename)
@@ -565,8 +567,7 @@ def run_image_experiment():
     # algorithm = 'ALS'
 
     global output_file
-    output_filename = create_output_filename(input_filename, algorithm, rank, steps)
-    output_file = open(output_filename, 'a')
+    init_output_file(input_filename, algorithm, rank, steps)
 
     output_file.write('##############################################\n')
     print('input_filename: ', input_filename)
@@ -633,9 +634,7 @@ def run_video_experiment():
     # algorithm = 'ALS'
 
     global output_file
-    output_filename = create_output_filename(input_filename, algorithm, rank, steps)
-    print(output_filename)
-    output_file = open(output_filename, 'a')
+    init_output_file(input_filename, algorithm, rank, steps)
 
     output_file.write('##############################################\n')
     print('input_filename: ', input_filename)
@@ -683,8 +682,8 @@ def main():
     # run_synthetic_experiment_1()
     # run_synthetic_shapes_experiment()
     # run_cardiac_mri_experiment()
-    # run_image_experiment()
-    run_video_experiment()
+    run_image_experiment()
+    # run_video_experiment()
 
 
 main()
