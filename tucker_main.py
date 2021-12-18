@@ -16,6 +16,8 @@ from tensor_data_handler import TensorDataHandler
 # Global variable since all ALS subroutines log to this file.
 output_file = None
 
+# Tensor utils -----------------------------------------------------------------
+
 def tensor_index_to_vec_index(tensor_index, shape):
     return np.ravel_multi_index(tensor_index, shape)
 
@@ -30,6 +32,8 @@ def solve_least_squares(A, b, l2_regularization):
     return np.linalg.solve(AtA_lambda, Atb)
 
 
+## Factor matrix updates -------------------------------------------------------
+
 # TODO(fahrbach): Show why higher-order SVD methods do not scale well? Seems
 # that they might if we use compressed representation?
 def update_factor_matrix(X_tucker, Y_tensor, factor_index, l2_regularization, debug_mode):
@@ -41,8 +45,8 @@ def update_factor_matrix(X_tucker, Y_tensor, factor_index, l2_regularization, de
     for n in range(X_tucker.core.ndim):
         if n == factor_index: continue
         # Important: For some reason, the ordering of this Kronecker product
-        # disagrees with Equation 4.2 in the reference above. Did they introduce
-        # a typo by thinking that the transpose reverses the order?
+        # disagrees with Equation 4.2 in the reference above. It seems they
+        # introduced a typo by thinking that the transpose reverses the order?
         K_matrix = np.kron(K_matrix, X_tucker.factors[n])
     # Each row of the current factor matrix is its own least squares problem.
     design_matrix = K_matrix @ core_matrix.T
@@ -59,6 +63,7 @@ def update_factor_matrix(X_tucker, Y_tensor, factor_index, l2_regularization, de
         X_tucker.factors[factor_index][row_index, :] = \
             np.linalg.solve(AtA_lambda, Atb)
 
+## Core tensor updates -------------------------------------------------------
 
 # Naive core tensor update that explicitly constructs the design matrix. This
 # requires O((I_1 * I_2 * I_3) * (R_1 * R_2 * R_3)) space, and is prohibitively
@@ -368,8 +373,8 @@ def init_output_file(output_filepath_prefix, algorithm, rank, steps):
 #   ~(1028, 1028, 512) and the rank is (4, 4, 4).
 # ==============================================================================
 def run_synthetic_experiment_1():
-    shape = (512, 512, 512)
-    rank = (4, 4, 2)
+    shape = (256, 256, 256)
+    rank = (2, 2, 2)
     steps = 10
     l2_regularization = 0.001
     seed = 0
@@ -379,27 +384,28 @@ def run_synthetic_experiment_1():
     algorithm = 'ALS'
     # algorithm = 'ALS-RS'
 
+    data_handler = TensorDataHandler()
+    data_handler.load_random_tucker(shape, [10, 10, 10], random_state=(seed + 1000))
+
     global output_file
-    output_filename = 'output/synthetic-1/synthetic-1'
+    output_filename = data_handler.output_filename_prefix
     output_filename += '_' + ','.join([str(x) for x in shape])
     output_filename += '_' + ','.join([str(x) for x in rank])
+    output_filename += '_' + str(seed + 1000)
     output_filename += '_' + algorithm
     output_filename += '.txt'
 
+    os.makedirs(os.path.dirname(output_filename), exist_ok=True)
     output_file = open(output_filename, 'a')
 
     output_file.write('##############################################\n')
 
     # Initialize target tensor Y.
-    Y_tucker = random_tucker(shape, rank, random_state=(seed + 1000))
-    Y = tl.tucker_to_tensor(Y_tucker)
+    Y = data_handler.tensor
     Y[0, 0, 0] = 1
 
     print('Y.shape: ', Y.shape)
     output_file.write('Y.shape: ' + str(Y.shape) + '\n')
-
-    print('shape: ', shape)
-    output_file.write('rank: ' + str(rank) + '\n')
     print('rank: ', rank)
     output_file.write('rank: ' + str(rank) + '\n')
     print('seed: ', seed)
@@ -419,14 +425,10 @@ def run_synthetic_experiment_1():
     output_file.flush()
 
     X_tucker = random_tucker(Y.shape, rank, random_state=seed)
-    if algorithm in ['ALS', 'ALS-RS']:
-        os.system('g++-10 -O2 -std=c++11 row_sampling.cc -o row_sampling')
-        run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm, steps, epsilon, delta,
-                                      downsampling_ratio, True)
-
+    run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm,
+            steps, epsilon, delta, downsampling_ratio, True)
     X = tl.tucker_to_tensor(X_tucker)
     print(X)
-
 
 # ==============================================================================
 # Synthetic Shapes Experiment:
@@ -560,13 +562,13 @@ def run_cardiac_mri_experiment():
 # ==============================================================================
 def run_image_experiment():
     data_handler = TensorDataHandler()
-    data_handler.load_image('data/images/nyc.jpg', resize_shape=(512, 512))
+    data_handler.load_image('data/images/nyc.jpg', resize_shape=(230, 307))
 
-    dimensions = [512, 512, 3]
-    rank = [4, 4, 3]
+    dimensions = [230, 307, 3]
+    rank = [10, 10, 2]
     seed = 0
     l2_regularization = 0.001
-    steps = 2
+    steps = 10
     epsilon = 0.1
     delta = 0.1
     downsampling_ratio = 1.0
@@ -696,9 +698,9 @@ def run_video_experiment():
 
 def main():
     # run_synthetic_experiment_1()
-    run_synthetic_shapes_experiment()
+    # run_synthetic_shapes_experiment()
     # run_cardiac_mri_experiment()
-    # run_image_experiment()
+    run_image_experiment()
     # run_video_experiment()
 
 
