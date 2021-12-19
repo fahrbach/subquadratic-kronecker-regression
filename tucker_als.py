@@ -10,10 +10,10 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import scipy.io as sio
 import skvideo.io
-from dataclasses import dataclass
+import dataclasses
 
 # TODO(fahrbach): Need to ensure that no new fields are added somehow.
-@dataclass
+@dataclasses.dataclass
 class AlgorithmConfig:
     # Instance info that defines optimization problem.
     input_shape: list[int] = None
@@ -164,20 +164,23 @@ def compute_ridge_leverage_scores(A, l2_regularization):
         leverage_scores[i] = A[i, :] @ normal_matrix_pinv @ A[i, :].T
     return leverage_scores
 
+# Writes vectorized version of leverage score vectors, factor matrices, and
+# core tensors to temporary files. The shapes of these np.ndarrays can be
+# reconstructed from the config file.
+def write_regression_instance_to_files(config, leverage_scores, X_tucker, step):
+    os.makedirs(os.path.dirname('tmp/'), exist_ok=True)
 
-def write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization,
-        epsilon, delta, step, alpha):
-    filename = 'leverage_scores.txt'
-    with open(filename, 'w') as f:
-        instance_info = [X_tucker.core.ndim, l2_regularization, epsilon, delta, step, alpha]
-        f.write(' '.join(str(_) for _ in instance_info) + '\n')
-        for n in range(X_tucker.core.ndim):
-            factor = X_tucker.factors[n]
-            factor_spectral_norm = np.linalg.norm(factor, 2) ** 2
-            factor_info = [factor.shape[0], factor.shape[1], factor_spectral_norm]
-            f.write(' '.join(str(_) for _ in factor_info) + '\n')
-            f.write(' '.join(str(score) for score in leverage_scores[n]) + '\n')
-
+    with open('tmp/config.txt', 'w') as f:
+        config_dict = dataclasses.asdict(config)
+        for key in config_dict:
+            f.write(str(key) + ' ' + str(config_dict[key]) + '\n')
+        f.write('step ' + str(step) + '\n')
+    for n in range(X_tucker.core.ndim):
+        np.savetxt(f'tmp/leverage_scores_{n}_vec.txt',
+                tl.tensor_to_vec(leverage_scores[n]))
+        np.savetxt(f'tmp/factor_matrix_{n}_vec.txt',
+                tl.tensor_to_vec(X_tucker.factors[n]))
+    np.savetxt('tmp/core_tensor_vec.txt', tl.tensor_to_vec(X_tucker.core))
 
 def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config, step,
         output_file):
@@ -196,8 +199,11 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config, step,
 
     # Write factor matrices, leverage score estimates, and core to `./tmp/`.
     start_time = time.time()
-    write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization,
-            epsilon, delta, step, downsampling_ratio)
+    write_regression_instance_to_files(config, leverage_scores, X_tucker, step)
+    if debug_mode:
+        print(' - write regression instance time:', time.time() - start_time)
+    assert(False)
+
     cmd = './row_sampling'
     os.system(cmd)
     if debug_mode:
@@ -271,7 +277,7 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config, step,
         new_core_vec = np.linalg.solve(SAtSA, SAtb)
         X_tucker.core = tl.reshape(new_core_vec, X_tucker.core.shape)
 
-@dataclass
+@dataclasses.dataclass
 class LossTerms:
     residual_norm: float = None
     core_tensor_norm: float = None
