@@ -21,16 +21,13 @@ class AlgorithmConfig:
     l2_regularization_strength: float = 0.0
 
     # Algorithm parameters.
-    algorithm: str = 'ALS' # Expected to be in ['ALS', 'ALS-RS'].
+    algorithm: str = 'ALS' # Expected to be in ['ALS', 'ALS-RS', 'ALS-naive'].
     random_seed: int = 0
-
-    # Parameters specific to 'ALS-RS'
-    naive_core_update: bool = False  # Explicitly construct design matrix.
 
     # Parameters specific to 'ALS-RS'
     epsilon: float = 0.1
     delta: float = 0.1
-    downsampling_ratio: float = 0.0001
+    downsampling_ratio: float = 0.001
 
     # Loop termination criteria.
     max_num_steps: int = 20
@@ -182,13 +179,18 @@ def write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization,
             f.write(' '.join(str(score) for score in leverage_scores[n]) + '\n')
 
 
-def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization,
-        step, epsilon, delta, downsampling_ratio, debug_mode):
-    global output_file
+def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config, step,
+        output_file):
+    l2_regularization = config.l2_regularization_strength
+    epsilon = config.epsilon
+    delta = config.delta
+    downsampling_ratio = config.downsampling_ratio
+    debug_mode = config.verbose
 
     # Compute approximate ridge leverage scores for each factor matrix.
     start_time = time.time()
-    leverage_scores = [compute_ridge_leverage_scores(factor, 0.0) for factor in X_tucker.factors]
+    leverage_scores = [compute_ridge_leverage_scores(factor, 0.0) for factor in
+            X_tucker.factors]
     if debug_mode:
         print(' - leverage score computation time:', time.time() - start_time)
 
@@ -343,17 +345,15 @@ def tucker_als(Y_tensor, config, output_file=None, X_tucker=None):
             print('Updating core tensor:')
         start_time = time.time()
         if config.algorithm == 'ALS':
-            if config.naive_core_update:
-                update_core_tensor_naive(X_tucker, Y_tensor,
-                        config.l2_regularization_strength)
-            else:
-                update_core_tensor_memory_efficient(X_tucker,
-                        X_tucker_factors_gram, Y_tensor,
-                        config.l2_regularization_strength, config.verbose)
+            update_core_tensor_memory_efficient(X_tucker,
+                    X_tucker_factors_gram, Y_tensor,
+                    config.l2_regularization_strength, config.verbose)
+        elif config.algorithm == 'ALS-naive':
+            update_core_tensor_naive(X_tucker, Y_tensor,
+                    config.l2_regularization_strength)
         elif config.algorithm == 'ALS-RS':
-            update_core_tensor_by_row_sampling(X_tucker, Y_tensor,
-                    l2_regularization, step, epsilon, delta,
-                    downsampling_ratio, debug_mode)
+            update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config,
+                    step, output_file)
         else:
             print('algorithm:', config.algorithm, 'is unsupported!')
             assert(False)

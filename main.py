@@ -1,16 +1,8 @@
 import numpy as np
 import tensorly as tl
-from tensorly.decomposition import parafac
-from tensorly.decomposition import tucker
-from tensorly.datasets import synthetic
-from tensorly.random import random_tucker
 import os
 import time
 import matplotlib.pyplot as plt
-from PIL import Image
-import scipy.io as sio
-import skvideo.io
-from dataclasses import dataclass
 
 from tensor_data_handler import TensorDataHandler
 from tucker_als import *
@@ -39,7 +31,7 @@ def init_output_file(output_filepath_prefix, algorithm, rank, steps):
 # - Note: We start to see nice gains from ALG-RS when the tensor has shape
 #   ~(1028, 1028, 512) and the rank is (4, 4, 4).
 # ==============================================================================
-def run_synthetic_experiment_1():
+def run_synthetic_experiment():
     shape = (50, 50, 100, 100)
     rank = (4, 4, 10, 4)
     steps = 10
@@ -54,7 +46,6 @@ def run_synthetic_experiment_1():
     data_handler = TensorDataHandler()
     data_handler.load_random_tucker(shape, [10, 10, 10, 10], random_state=(seed + 1000))
 
-    global output_file
     output_filename = data_handler.output_filename_prefix
     output_filename += '_' + ','.join([str(x) for x in shape])
     output_filename += '_' + ','.join([str(x) for x in rank])
@@ -242,8 +233,8 @@ def run_image_experiment():
     config.rank = [25, 25, 2]
     config.l2_regularization_strength = 0.001
 
-    config.algorithm = 'ALS'
-    #config.algorithm = 'ALS-RS'
+    #config.algorithm = 'ALS'
+    config.algorithm = 'ALS-RS'
     #config.verbose = False
 
     config.rre_gap_tol = None
@@ -263,31 +254,11 @@ def run_image_experiment():
     # to output_file.
     # WriteConfigAndStatsToOutput()
 
-    """
-    # Compression factor
-    tucker_size = 0
-    core_size = 1
-    for i in range(len(dimensions)):
-        tucker_size += dimensions[i] * rank[i]
-        core_size *= rank[i]
-    tucker_size += core_size
-    print('tucker_size:', tucker_size)
-    output_file.write('tucker_size: ' + str(tucker_size) + '\n')
-    compression_factor = Y.size / tucker_size
-    print('compression_factor:', compression_factor)
-    output_file.write('compression_factor: ' + str(compression_factor) + '\n')
-    output_file.flush()
-    """
-
     Y = data_handler.tensor
     #print(Y)
     #plt.imshow(Y)
     #plt.show()
-    X_tucker = random_tucker(Y.shape, config.rank, random_state=config.random_seed)
-    # Inputs: Y, algorithm_config, output_file, X_tucker=None
     X_tucker = tucker_als(Y, config, output_file, X_tucker=None)
-
-    #tucker_als(X_tucker, Y, config.l2_regularization_strength, config.algorithm, config.max_num_steps, config.epsilon, config.delta, config.downsampling_ratio, config.verbose)
 
     # Plotting the original and reconstruction from the decompositions
     fig = plt.figure()
@@ -369,9 +340,9 @@ def run_video_experiment():
                                       downsampling_ratio, True)
 
 def main():
-    # run_synthetic_experiment_1()
+    # run_synthetic_experiment()
     # run_synthetic_shapes_experiment()
-    #run_cardiac_mri_experiment()
+    # run_cardiac_mri_experiment()
     run_image_experiment()
     # run_video_experiment()
 
