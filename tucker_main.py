@@ -26,11 +26,6 @@ def vec_index_to_tensor_index(vec_index, shape):
     return np.unravel_index(vec_index, shape)
 
 
-def solve_least_squares(A, b, l2_regularization):
-    AtA_lambda = A.T @ A + l2_regularization * np.identity(A.shape[1])
-    Atb = A.T @ b
-    return np.linalg.solve(AtA_lambda, Atb)
-
 # TODO(fahrbach): Describe. Returns (A_1 \ktimes ... \ktimes A_N) @ B
 def kron_mat_mult(kroneckor_matrices, matrix):
     if len(matrix.shape) == 1:
@@ -59,43 +54,39 @@ def kron_mat_mult(kroneckor_matrices, matrix):
                 (mat_shape[1], vec_size)))
     return output
 
-
 ## Factor matrix updates -------------------------------------------------------
 
 # TODO(fahrbach): Show why higher-order SVD methods do not scale well? Seems
 # that they might if we use compressed representation?
+# TODO(fahrbach): Speed up parallel factor solve aspect of this function.
 def update_factor_matrix(X_tucker, Y_tensor, factor_index, l2_regularization, debug_mode):
     # See the matricized version of Equation 4.2 in "Tensor Decompositions and
     # Applications."
     Y_matrix = tl.unfold(Y_tensor, factor_index)
     core_matrix = tl.unfold(X_tucker.core, factor_index)
-    K_matrix = np.identity(1)
-    for n in range(X_tucker.core.ndim):
-        if n == factor_index: continue
-        # Important: For some reason, the ordering of this Kronecker product
-        # disagrees with Equation 4.2 in the reference above. It seems they
-        # introduced a typo by thinking that the transpose reverses the order?
-        K_matrix = np.kron(K_matrix, X_tucker.factors[n])
-    # Each row of the current factor matrix is its own least squares problem.
-    design_matrix = K_matrix @ core_matrix.T
+
+    factors = [X_tucker.factors[i] for i in range(X_tucker.core.ndim) if i != factor_index]
+    design_matrix = kron_mat_mult(factors, core_matrix.T)
+
     if debug_mode:
         print(' - design matrix shape:', design_matrix.shape)
-        print(' - number of least squares solves:', X_tucker.factors[factor_index].shape[0])
+        print(' - number of least squares solves:',
+                X_tucker.factors[factor_index].shape[0])
 
     # Use the same "normalized" design matrix for all least squares solves.
     AtA_lambda = design_matrix.T @ design_matrix \
                  + l2_regularization * np.identity(design_matrix.shape[1])
+    # Compute all response vectors "in parallel" with a matmul.
+    response_matrix = Y_matrix @ design_matrix
     for row_index in range(X_tucker.factors[factor_index].shape[0]):
-        response_vec = Y_matrix[row_index, :]
-        Atb = design_matrix.T @ response_vec
         X_tucker.factors[factor_index][row_index, :] = \
-            np.linalg.solve(AtA_lambda, Atb)
+            np.linalg.solve(AtA_lambda, response_matrix[row_index, :])
 
 ## Core tensor updates -------------------------------------------------------
 
 # Naive core tensor update that explicitly constructs the design matrix. This
 # requires O((I_1 * I_2 * I_3) * (R_1 * R_2 * R_3)) space, and is prohibitively
-# expensive for anything interesting. It also seems less numerically stable?
+# expensive for anything interesting. It seems to be less accurate numerically?
 def update_core_tensor_naive(X_tucker, Y_tensor, l2_regularization):
     design_matrix = np.identity(1)
     for n in range(X_tucker.core.ndim):
@@ -103,23 +94,20 @@ def update_core_tensor_naive(X_tucker, Y_tensor, l2_regularization):
 
     Y_vec = tl.tensor_to_vec(Y_tensor)
 
-    new_core_tensor_vec = solve_least_squares( \
-        design_matrix, Y_vec, l2_regularization)
-    X_tucker.core = tl.reshape(new_core_tensor_vec, X_tucker.core.shape)
-
+    AtA_lambda = design_matrix.T @ design_matrix
+    AtA_lambda += l2_regularization * np.identity(design_matrix.shape[1])
+    Atb = design_matrix.T @ Y_vec
+    X_tucker_core = tl.reshape(np.linalg.solve(AtA_lambda, Atb),
+            X_tucker.core.shape)
 
 # Memory-efficient construction of the normal equation for the core tensor
 # update.
-#
-# Note that we manually sped up the computation of K^T * vec(Y) by storing
-# partially constructed Kronecker rows to avoid recomputation. This gave a
-# speedup of ~40% over the simpler implementation.
 def update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization, debug_mode):
     start_time = time.time()
     KtK_lambda = np.identity(1)
     for n in range(len(X_tucker.factors)):
-        KtK_lambda = np.kron(KtK_lambda, \
-                             X_tucker.factors[n].T @ X_tucker.factors[n])
+        KtK_lambda = np.kron(KtK_lambda,
+                X_tucker.factors[n].T @ X_tucker.factors[n])
     KtK_lambda += l2_regularization * np.identity(KtK_lambda.shape[0])
     end_time = time.time()
     if debug_mode:
@@ -138,7 +126,7 @@ def update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization, d
     # Python loop slowdowns. Is it possible to only use NumPY operations without
     # using too much memory?
     start_time = time.time()
-    b = kron_mat_mult([f.T for f in X_tucker.factors], Y_vec)
+    b = kron_mat_mult([factor.T for factor in X_tucker.factors], Y_vec)
     end_time = time.time()
     if debug_mode:
         print(' - Ktb construction time:', end_time - start_time)
@@ -173,8 +161,8 @@ def write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization, 
             f.write(' '.join(str(score) for score in leverage_scores[n]) + '\n')
 
 
-def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization, step, epsilon, delta, downsampling_ratio,
-                                       debug_mode):
+def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization,
+        step, epsilon, delta, downsampling_ratio, debug_mode):
     global output_file
 
     start_time = time.time()
@@ -194,8 +182,8 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization, st
         num_core_elements *= dimension
 
     start_time = time.time()
-    write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization, epsilon, delta, step,
-                                  downsampling_ratio)
+    write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization,
+            epsilon, delta, step, downsampling_ratio)
     cmd = './row_sampling'
     os.system(cmd)
     end_time = time.time()
@@ -269,7 +257,7 @@ def compute_loss(Y_tensor, X_tucker, l2_regularization):
     return loss
 
 # Relative residual error.
-def compute_fitness(Y_tensor, X_tucker):
+def compute_relative_residual_error(Y_tensor, X_tucker):
     residual_vec = tl.tensor_to_vec(Y_tensor - tl.tucker_to_tensor(X_tucker))
     return np.linalg.norm(residual_vec) / np.linalg.norm(tl.tensor_to_vec(Y_tensor))
 
@@ -299,9 +287,9 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
 
             new_loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
             rmse = (new_loss / num_elements) ** 0.5
-            fitness = compute_fitness(Y_tensor, X_tucker)
-            print('loss: {} RMSE: {} fitness: {} time: {}'.format(new_loss, rmse, fitness, end_time - start_time))
-            output_file.write('loss: {} RMSE: {} fitness: {} time: {}'.format(new_loss, rmse, fitness, end_time - start_time) + '\n')
+            rre = compute_relative_residual_error(Y_tensor, X_tucker)
+            print('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss, rmse, rre, end_time - start_time))
+            output_file.write('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss, rmse, rre, end_time - start_time) + '\n')
             if debug_mode and new_loss > loss:
                 print('Warning: The loss function increased!')
                 output_file.write('Warning: The loss function increased!\n')
@@ -326,9 +314,9 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
 
         new_loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
         rmse = (new_loss / num_elements) ** 0.5
-        fitness = compute_fitness(Y_tensor, X_tucker)
-        print('loss: {} RMSE: {} fitness: {} time: {}'.format(new_loss, rmse, fitness, end_time - start_time))
-        output_file.write('loss: {} RMSE: {} fitness: {} time: {}'.format(new_loss, rmse, fitness, end_time - start_time) + '\n')
+        rre = compute_relative_residual_error(Y_tensor, X_tucker)
+        print('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss, rmse, rre, end_time - start_time))
+        output_file.write('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss, rmse, rre, end_time - start_time) + '\n')
         if debug_mode and new_loss > loss:
             print('Warning: The loss function increased!')
             output_file.write('Warning: The loss function increased!\n')
@@ -550,10 +538,10 @@ def run_cardiac_mri_experiment():
 # ==============================================================================
 def run_image_experiment():
     data_handler = TensorDataHandler()
-    data_handler.load_image('data/images/nyc.jpg', resize_shape=(512, 512))
+    data_handler.load_image('data/images/nyc.jpg', resize_shape=(800, 600))
 
     dimensions = [512, 512, 3]
-    rank = [4, 4, 2]
+    rank = [50, 50, 3]
     seed = 0
     l2_regularization = 0.001
     steps = 10
