@@ -25,7 +25,6 @@ def tensor_index_to_vec_index(tensor_index, shape):
 def vec_index_to_tensor_index(vec_index, shape):
     return np.unravel_index(vec_index, shape)
 
-
 # TODO(fahrbach): Describe. Returns (A_1 \ktimes ... \ktimes A_N) @ B
 def kron_mat_mult(kroneckor_matrices, matrix):
     if len(matrix.shape) == 1:
@@ -54,35 +53,51 @@ def kron_mat_mult(kroneckor_matrices, matrix):
                 (mat_shape[1], vec_size)))
     return output
 
-## Factor matrix updates -------------------------------------------------------
-
 # TODO(fahrbach): Show why higher-order SVD methods do not scale well? Seems
 # that they might if we use compressed representation?
-# TODO(fahrbach): Speed up parallel factor solve aspect of this function.
-def update_factor_matrix(X_tucker, Y_tensor, factor_index, l2_regularization, debug_mode):
-    # See the matricized version of Equation 4.2 in "Tensor Decompositions and
-    # Applications."
+# Note: `X_tucker_factors_gram` must be a list of the gram matrices for the
+# current factor matrices (i.e., X_tucker.factors[i].T @ X_tucker.factors[i]).
+def update_factor_matrix(X_tucker, X_tucker_factors_gram, Y_tensor,
+        factor_index, l2_regularization, debug_mode):
+    # Matricized version of Eq 4.2 in "Tensor Decompositions and Applications."
+    start_time = time.time()
     Y_matrix = tl.unfold(Y_tensor, factor_index)
     core_matrix = tl.unfold(X_tucker.core, factor_index)
 
-    factors = [X_tucker.factors[i] for i in range(X_tucker.core.ndim) if i != factor_index]
-    design_matrix = kron_mat_mult(factors, core_matrix.T)
-
+    # Efficient computation of normal matrix A^T A + \lambda * I.
+    kron_squares = [X_tucker_factors_gram[i] for i in
+            range(X_tucker.core.ndim) if i != factor_index]
+    AtA_lambda = core_matrix @ kron_mat_mult(kron_squares, core_matrix.T) \
+        + l2_regularization * np.identity(core_matrix.shape[0])
     if debug_mode:
-        print(' - design matrix shape:', design_matrix.shape)
-        print(' - number of least squares solves:',
-                X_tucker.factors[factor_index].shape[0])
+        #print(' - KtK_lambda shape:', AtA_lambda.shape)
+        print(' - KtK_lambda construction time:', time.time() - start_time)
 
-    # Use the same "normalized" design matrix for all least squares solves.
-    AtA_lambda = design_matrix.T @ design_matrix \
-                 + l2_regularization * np.identity(design_matrix.shape[1])
-    # Compute all response vectors "in parallel" with a matmul.
-    response_matrix = Y_matrix @ design_matrix
+    # Efficient computation of response matrix (i.e., all response vectors).
+    start_time = time.time()
+    factors = [X_tucker.factors[i].T for i in range(X_tucker.core.ndim) if i != factor_index]
+    tmp = kron_mat_mult(factors, Y_matrix.T)
+    response_matrix = tmp.T @ core_matrix.T
+    if debug_mode:
+        #print(' - KtB shape:', response_matrix.shape)
+        print(' - KtB construction time:', time.time() - start_time)
+        print(' - num least squares solves:',
+                X_tucker.factors[factor_index].shape[0])
+        print(' - solve size:', AtA_lambda.shape, response_matrix.shape[1])
+    
+    start_time = time.time()
     for row_index in range(X_tucker.factors[factor_index].shape[0]):
         X_tucker.factors[factor_index][row_index, :] = \
             np.linalg.solve(AtA_lambda, response_matrix[row_index, :])
+    if debug_mode:
+        print(' - total np.linalg.solve() time:',
+                time.time() - start_time)
 
-## Core tensor updates -------------------------------------------------------
+    start_time = time.time()
+    X_tucker_factors_gram[factor_index] = X_tucker.factors[factor_index].T @ \
+        X_tucker.factors[factor_index]
+    if debug_mode:
+        print(' - X_tucker factor gram update time:', time.time() - start_time)
 
 # Naive core tensor update that explicitly constructs the design matrix. This
 # requires O((I_1 * I_2 * I_3) * (R_1 * R_2 * R_3)) space, and is prohibitively
@@ -102,41 +117,28 @@ def update_core_tensor_naive(X_tucker, Y_tensor, l2_regularization):
 
 # Memory-efficient construction of the normal equation for the core tensor
 # update.
-def update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization, debug_mode):
+def update_core_tensor_memory_efficient(X_tucker, X_tucker_factors_gram,
+        Y_tensor, l2_regularization, debug_mode):
     start_time = time.time()
     KtK_lambda = np.identity(1)
     for n in range(len(X_tucker.factors)):
-        KtK_lambda = np.kron(KtK_lambda,
-                X_tucker.factors[n].T @ X_tucker.factors[n])
+        KtK_lambda = np.kron(KtK_lambda, X_tucker_factors_gram[n])
     KtK_lambda += l2_regularization * np.identity(KtK_lambda.shape[0])
-    end_time = time.time()
     if debug_mode:
-        print(' - KtK_lambda construction time:', end_time - start_time)
+        print(' - KtK_lambda construction time:', time.time() - start_time)
 
-    factors_T = [factor.T.copy() for factor in X_tucker.factors]
     Y_vec = tl.tensor_to_vec(Y_tensor)
-    b = np.zeros(KtK_lambda.shape[0])
-    row_index = 0
-    if debug_mode:
-        num_rows = len(Y_vec)
-        num_cols = KtK_lambda.shape[0]
-        print(' - design matrix shape:', (num_rows, num_cols))
-
-    # Note: fahrbach thinks this is still much slower than it could be due to
-    # Python loop slowdowns. Is it possible to only use NumPY operations without
-    # using too much memory?
     start_time = time.time()
     b = kron_mat_mult([factor.T for factor in X_tucker.factors], Y_vec)
-    end_time = time.time()
     if debug_mode:
-        print(' - Ktb construction time:', end_time - start_time)
+        print(' - Ktb construction time:', time.time() - start_time)
+        print(' - solve size:', KtK_lambda.shape, b.shape[0])
 
     start_time = time.time()
     new_core_tensor_vec = np.linalg.solve(KtK_lambda, b)
-    end_time = time.time()
-    if debug_mode:
-        print(' - np.linalg.solve(KtK_lambda, b) time:', end_time - start_time)
     X_tucker.core = tl.reshape(new_core_tensor_vec, X_tucker.core.shape)
+    if debug_mode:
+        print(' - np.linalg.solve() time:', time.time() - start_time)
 
 
 def compute_ridge_leverage_scores(A, l2_regularization):
@@ -148,7 +150,8 @@ def compute_ridge_leverage_scores(A, l2_regularization):
     return leverage_scores
 
 
-def write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization, epsilon, delta, step, alpha):
+def write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization,
+        epsilon, delta, step, alpha):
     filename = 'leverage_scores.txt'
     with open(filename, 'w') as f:
         instance_info = [X_tucker.core.ndim, l2_regularization, epsilon, delta, step, alpha]
@@ -212,6 +215,8 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization,
         if debug_mode:
             print(' - sampled augmented design matrix shape:', design_matrix.shape)
         for line_index in range(1, len(lines)):
+            if line_index % 100 == 0:
+                print(line_index, line_index / len(lines))
             line = lines[line_index].strip().split(',')
             sketched_row_index = line_index - 1
             shape_indices = [int(_) for _ in line[:-2]]
@@ -262,8 +267,8 @@ def compute_relative_residual_error(Y_tensor, X_tucker):
     return np.linalg.norm(residual_vec) / np.linalg.norm(tl.tensor_to_vec(Y_tensor))
 
 
-def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
-                                  algorithm, num_steps, epsilon, delta, downsampling_ratio, debug_mode):
+def tucker_als(X_tucker, Y_tensor, l2_regularization, algorithm, num_steps,
+        epsilon, delta, downsampling_ratio, debug_mode):
     global output_file
 
     num_elements = 1
@@ -271,42 +276,49 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
         num_elements *= n
     loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
 
+    X_tucker_factors_gram = [X_tucker.factors[i].T @ X_tucker.factors[i] for i
+            in range(X_tucker.core.ndim)]
+
     for step in range(num_steps):
         print('step:', step)
         output_file.write('step: ' + str(step) + '\n')
         output_file.flush()
 
-        # --------------------------------------------------------------------------
         # Factor matrix updates.
         for factor_index in range(X_tucker.core.ndim):
             if debug_mode:
                 print('Updating factor matrix:', factor_index)
             start_time = time.time()
-            update_factor_matrix(X_tucker, Y_tensor, factor_index, l2_regularization, debug_mode)
+            update_factor_matrix(X_tucker, X_tucker_factors_gram, Y_tensor,
+                factor_index, l2_regularization, debug_mode)
             end_time = time.time()
 
             new_loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
             rmse = (new_loss / num_elements) ** 0.5
             rre = compute_relative_residual_error(Y_tensor, X_tucker)
-            print('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss, rmse, rre, end_time - start_time))
-            output_file.write('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss, rmse, rre, end_time - start_time) + '\n')
+            print('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss, rmse,
+                rre, end_time - start_time))
+            output_file.write('loss: {} RMSE: {} RRE: {} time: {}'.format(
+                new_loss, rmse, rre, end_time - start_time) + '\n')
             if debug_mode and new_loss > loss:
                 print('Warning: The loss function increased!')
                 output_file.write('Warning: The loss function increased!\n')
             output_file.flush()
             loss = new_loss
 
-        # --------------------------------------------------------------------------
         # Core tensor update.
         if debug_mode:
             print('Updating core tensor:')
         start_time = time.time()
         if algorithm == 'ALS':
             #update_core_tensor_naive(X_tucker, Y_tensor, l2_regularization)
-            update_core_tensor_memory_efficient(X_tucker, Y_tensor, l2_regularization, debug_mode)
+            update_core_tensor_memory_efficient(X_tucker,
+                    X_tucker_factors_gram, Y_tensor, l2_regularization,
+                    debug_mode)
         elif algorithm == 'ALS-RS':
-            update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization, step, epsilon, delta,
-                                               downsampling_ratio, debug_mode)
+            update_core_tensor_by_row_sampling(X_tucker, Y_tensor,
+                    l2_regularization, step, epsilon, delta, downsampling_ratio,
+                    debug_mode)
         else:
             print('algorithm:', algorithm, 'is unsupported.')
             assert (False)
@@ -315,8 +327,10 @@ def run_alternating_least_squares(X_tucker, Y_tensor, l2_regularization, \
         new_loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
         rmse = (new_loss / num_elements) ** 0.5
         rre = compute_relative_residual_error(Y_tensor, X_tucker)
-        print('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss, rmse, rre, end_time - start_time))
-        output_file.write('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss, rmse, rre, end_time - start_time) + '\n')
+        print('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss, rmse, rre,
+            end_time - start_time))
+        output_file.write('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss,
+            rmse, rre, end_time - start_time) + '\n')
         if debug_mode and new_loss > loss:
             print('Warning: The loss function increased!')
             output_file.write('Warning: The loss function increased!\n')
@@ -349,8 +363,8 @@ def init_output_file(output_filepath_prefix, algorithm, rank, steps):
 #   ~(1028, 1028, 512) and the rank is (4, 4, 4).
 # ==============================================================================
 def run_synthetic_experiment_1():
-    shape = (256, 256, 256)
-    rank = (2, 2, 2)
+    shape = (100, 100, 100, 100)
+    rank = (4, 4, 4, 4)
     steps = 10
     l2_regularization = 0.001
     seed = 0
@@ -361,7 +375,7 @@ def run_synthetic_experiment_1():
     # algorithm = 'ALS-RS'
 
     data_handler = TensorDataHandler()
-    data_handler.load_random_tucker(shape, [10, 10, 10], random_state=(seed + 1000))
+    data_handler.load_random_tucker(shape, [10, 10, 10, 10], random_state=(seed + 1000))
 
     global output_file
     output_filename = data_handler.output_filename_prefix
@@ -378,7 +392,7 @@ def run_synthetic_experiment_1():
 
     # Initialize target tensor Y.
     Y = data_handler.tensor
-    Y[0, 0, 0] = 1
+    Y[(0, 0, 0, 0)] = 0
 
     print('Y.shape: ', Y.shape)
     output_file.write('Y.shape: ' + str(Y.shape) + '\n')
@@ -401,10 +415,10 @@ def run_synthetic_experiment_1():
     output_file.flush()
 
     X_tucker = random_tucker(Y.shape, rank, random_state=seed)
-    run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm,
-            steps, epsilon, delta, downsampling_ratio, True)
-    X = tl.tucker_to_tensor(X_tucker)
-    print(X)
+    tucker_als(X_tucker, Y, l2_regularization, algorithm, steps, epsilon,
+            delta, downsampling_ratio, True)
+    #X = tl.tucker_to_tensor(X_tucker)
+    #print(X)
 
 # ==============================================================================
 # Synthetic Shapes Experiment:
@@ -531,6 +545,13 @@ def run_cardiac_mri_experiment():
     X = tl.tucker_to_tensor(X_tucker)
     print(X)
 
+def to_image(tensor):
+    """A convenience function to convert from a float dtype back to uint8"""
+    im = tl.to_numpy(tensor)
+    im -= im.min()
+    im /= im.max()
+    im *= 255
+    return im.astype(np.uint8)
 
 # ==============================================================================
 # Image Experiments
@@ -539,15 +560,17 @@ def run_cardiac_mri_experiment():
 def run_image_experiment():
     data_handler = TensorDataHandler()
     data_handler.load_image('data/images/nyc.jpg', resize_shape=(800, 600))
+    #data_handler.load_image('data/images/mina.jpg', resize_shape=(3000, 4000))
+    #data_handler.load_image('data/images/mina.jpg', resize_shape=(300, 400))
 
-    dimensions = [512, 512, 3]
+    dimensions = data_handler.tensor.shape
     rank = [50, 50, 3]
     seed = 0
     l2_regularization = 0.001
     steps = 10
     epsilon = 0.1
     delta = 0.1
-    downsampling_ratio = 1.0
+    downsampling_ratio = 0.001
     #algorithm = 'ALS-RS'
     algorithm = 'ALS'
 
@@ -600,12 +623,27 @@ def run_image_experiment():
     output_file.flush()
 
     X_tucker = random_tucker(Y.shape, rank, random_state=seed)
-    run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm,
-            steps, epsilon, delta, downsampling_ratio, True)
+    tucker_als(X_tucker, Y, l2_regularization, algorithm, steps, epsilon, delta,
+            downsampling_ratio, True)
 
-    X = tl.tucker_to_tensor(X_tucker)
+    # X = tl.tucker_to_tensor(X_tucker)
     # print(X)
-    plt.imshow(X)
+    # plt.imshow(X)
+    # plt.show()
+
+    # Plotting the original and reconstruction from the decompositions
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 2, 1)
+    ax.set_axis_off()
+    ax.imshow(to_image(Y))
+    ax.set_title('original')
+
+    ax = fig.add_subplot(1, 2, 2)
+    ax.set_axis_off()
+    ax.imshow(to_image(tl.tucker_to_tensor(X_tucker)))
+    ax.set_title('Tucker')
+
+    plt.tight_layout()
     plt.show()
 
 # ==============================================================================
