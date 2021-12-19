@@ -28,6 +28,7 @@ def vec_index_to_tensor_index(vec_index, shape):
 
 # Algorithm config -------------------------------------------------------------
 
+# TODO(fahrbach): Need to ensure that no new fields are added somehow.
 @dataclass
 class AlgorithmConfig:
     # Instance info that defines optimization problem.
@@ -49,10 +50,12 @@ class AlgorithmConfig:
 
     # Loop termination criteria.
     max_num_steps: int = 20
-    rre_gap: float = 1e-6  # Tracks relative residual errors of outer loop.
+    rre_gap_tol: float = 1e-6  # Tracks relative residual errors of outer loop.
 
     # Logging info.
     verbose: bool = True  # Prints solve stats and info to STDOUT.
+
+    # TODO(fahrbach): Add Verify() method.
 
 # TODO(fahrbach): Describe runtime. Returns (A_1 \ktimes ... \ktimes A_N) @ B
 def kron_mat_mult(kroneckor_matrices, matrix):
@@ -281,27 +284,37 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization,
         new_core_vec = np.linalg.solve(SAtSA, SAtb)
         X_tucker.core = tl.reshape(new_core_vec, X_tucker.core.shape)
 
+@dataclass
+class LossTerms:
+    residual_norm: float = None
+    core_tensor_norm: float = None
+    factor_matrix_norms: list[float] = None
 
-def compute_loss(Y_tensor, X_tucker, l2_regularization):
-    loss = 0.0
-    residual_vec = tl.tensor_to_vec(Y_tensor - tl.tucker_to_tensor(X_tucker))
-    loss += np.linalg.norm(residual_vec) ** 2
-    loss += l2_regularization * np.linalg.norm(tl.tensor_to_vec(X_tucker.core)) ** 2
-    for n in range(len(X_tucker.factors)):
-        loss += l2_regularization * np.linalg.norm(X_tucker.factors[n]) ** 2
-    return loss
+    l2_regularization_strength: float = None
 
-# Relative residual error.
-def compute_relative_residual_error(Y_tensor, X_tucker):
-    residual_vec = tl.tensor_to_vec(Y_tensor - tl.tucker_to_tensor(X_tucker))
-    return np.linalg.norm(residual_vec) / np.linalg.norm(tl.tensor_to_vec(Y_tensor))
+    loss: float = None
+    rmse: float = None
+    rre: float = None  # Relative residual error (ignores L2 regularization)
 
+def ComputeLossTerms(X_tucker, Y_tensor, l2_regularization, Y_norm, Y_size):
+    loss_terms = LossTerms()
+    loss_terms.residual_norm = np.linalg.norm(Y_tensor -
+            tl.tucker_to_tensor(X_tucker))
+    loss_terms.core_tensor_norm = np.linalg.norm(X_tucker.core)
+    loss_terms.factor_matrix_norms = [np.linalg.norm(f_matrix) for f_matrix in
+            X_tucker.factors]
 
-#def tucker_als(X_tucker, Y_tensor, l2_regularization, algorithm, num_steps,
-#        epsilon, delta, downsampling_ratio, debug_mode):
-# TODO(fahrbach): Describe this function.
-def tucker_als(Y_tensor, config, output_file, X_tucker=None):
-    # Initialize Tucker decomposition if not provided as input.
+    loss_terms.l2_regularization_strength = l2_regularization
+
+    loss_terms.loss = loss_terms.residual_norm**2
+    loss_terms.loss += l2_regularization * loss_terms.core_tensor_norm**2
+    for norm in loss_terms.factor_matrix_norms:
+        loss_terms.loss += l2_regularization * norm**2
+    loss_terms.rmse = np.sqrt(loss_terms.loss / Y_size)
+    loss_terms.rre = loss_terms.residual_norm / Y_norm
+    return loss_terms
+
+def tucker_als(Y_tensor, config, output_file=None, X_tucker=None):
     if X_tucker == None:
         X_tucker = random_tucker(Y_tensor.shape, config.rank,
                 random_state=config.random_seed)
@@ -309,8 +322,14 @@ def tucker_als(Y_tensor, config, output_file, X_tucker=None):
     X_tucker_factors_gram = [X_tucker.factors[n].T @ X_tucker.factors[n] for n
             in range(X_tucker.core.ndim)]
 
-    num_elements = np.prod(Y_tensor.shape)
-    loss = compute_loss(Y_tensor, X_tucker, config.l2_regularization_strength)
+    # Precompute quantities for faster loss computations.
+    num_elements = Y_tensor.size
+    Y_norm = np.linalg.norm(Y_tensor)
+
+    loss_terms = ComputeLossTerms(X_tucker, Y_tensor,
+            config.l2_regularization_strength, Y_norm, num_elements)
+    all_loss_terms = [loss_terms]
+    prev_outerloop_rre = loss_terms.rre
 
     for step in range(config.max_num_steps):
         print('step:', step)
@@ -324,18 +343,16 @@ def tucker_als(Y_tensor, config, output_file, X_tucker=None):
                 factor_index, config.l2_regularization_strength, config.verbose)
             end_time = time.time()
 
-            new_loss = compute_loss(Y_tensor, X_tucker, config.l2_regularization_strength)
-            rmse = (new_loss / num_elements) ** 0.5
-            rre = compute_relative_residual_error(Y_tensor, X_tucker)
-            print('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss, rmse,
-                rre, end_time - start_time))
-            output_file.write('loss: {} RMSE: {} RRE: {} time: {}'.format(
-                new_loss, rmse, rre, end_time - start_time) + '\n')
-            if new_loss > loss:
+            loss_terms = ComputeLossTerms(X_tucker, Y_tensor,
+                    config.l2_regularization_strength, Y_norm, num_elements)
+            print('loss: {} rmse: {} rre: {} time: {}'.format(loss_terms.loss,
+                loss_terms.rmse, loss_terms.rre, end_time - start_time))
+            output_file.write('loss: {} rmse: {} rre: {} time: {}'.format(
+                loss_terms.loss, loss_terms.rmse, loss_terms.rre, end_time - start_time) + '\n')
+            if loss_terms.loss > all_loss_terms[-1].loss:
                 print('Warning: The loss function increased!')
                 output_file.write('Warning: The loss function increased!\n')
-            output_file.flush()
-            loss = new_loss
+            all_loss_terms.append(loss_terms)
 
         if config.verbose:
             print('Updating core tensor:')
@@ -357,20 +374,26 @@ def tucker_als(Y_tensor, config, output_file, X_tucker=None):
             assert(False)
         end_time = time.time()
 
-        new_loss = compute_loss(Y_tensor, X_tucker,
-                config.l2_regularization_strength)
-        rmse = (new_loss / num_elements) ** 0.5
-        rre = compute_relative_residual_error(Y_tensor, X_tucker)
-        print('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss, rmse, rre,
-            end_time - start_time))
-        output_file.write('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss,
-            rmse, rre, end_time - start_time) + '\n')
-        if new_loss > loss:
+        loss_terms = ComputeLossTerms(X_tucker, Y_tensor,
+                config.l2_regularization_strength, Y_norm, num_elements)
+        print('loss: {} rmse: {} rre: {} time: {}'.format(loss_terms.loss,
+            loss_terms.rmse, loss_terms.rre, end_time - start_time))
+        output_file.write('loss: {} rmse: {} rre: {} time: {}'.format(
+            loss_terms.loss, loss_terms.rmse, loss_terms.rre, end_time - start_time) + '\n')
+        if loss_terms.loss > all_loss_terms[-1].loss:
             print('Warning: The loss function increased!')
             output_file.write('Warning: The loss function increased!\n')
-        output_file.flush()
-        loss = new_loss
+        all_loss_terms.append(loss_terms)
+
+        # Check relative residual error gap for early termination.
+        rre_diff = prev_outerloop_rre - loss_terms.rre
+        print('rre_diff:', rre_diff)
+        if config.rre_gap_tol != None:
+            if rre_diff >= 0 and rre_diff < config.rre_gap_tol:
+                break
+        prev_outerloop_rre = loss_terms.rre
         print()
+
     return X_tucker
 
 # Creates output filename based on input algorithm parameters, makes output path
@@ -598,11 +621,13 @@ def run_image_experiment():
 
     config.input_shape = data_handler.tensor.shape
     config.rank = [25, 25, 2]
-    config.l2_regularization = 0.001
+    config.l2_regularization_strength = 0.001
 
     config.algorithm = 'ALS'
     #config.algorithm = 'ALS-RS'
     #config.verbose = False
+
+    config.rre_gap_tol = None
     print(config)
 
     global output_file
