@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import scipy.io as sio
 import skvideo.io
+from dataclasses import dataclass
 
 from tensor_data_handler import TensorDataHandler
 
@@ -25,7 +26,35 @@ def tensor_index_to_vec_index(tensor_index, shape):
 def vec_index_to_tensor_index(vec_index, shape):
     return np.unravel_index(vec_index, shape)
 
-# TODO(fahrbach): Describe. Returns (A_1 \ktimes ... \ktimes A_N) @ B
+# Algorithm config -------------------------------------------------------------
+
+@dataclass
+class AlgorithmConfig:
+    # Instance info that defines optimization problem.
+    input_shape: list[int] = None
+    rank: list[int] = None
+    l2_regularization_strength: float = 0.0
+
+    # Algorithm parameters.
+    algorithm: str = 'ALS' # Expected to be in ['ALS', 'ALS-RS'].
+    random_seed: int = 0
+
+    # Parameters specific to 'ALS-RS'
+    naive_core_update: bool = False  # Explicitly construct design matrix.
+
+    # Parameters specific to 'ALS-RS'
+    epsilon: float = 0.1
+    delta: float = 0.1
+    downsampling_ratio: float = 0.0001
+
+    # Loop termination criteria.
+    max_num_steps: int = 20
+    rre_gap: float = 1e-6  # Tracks relative residual errors of outer loop.
+
+    # Logging info.
+    verbose: bool = True  # Prints solve stats and info to STDOUT.
+
+# TODO(fahrbach): Describe runtime. Returns (A_1 \ktimes ... \ktimes A_N) @ B
 def kron_mat_mult(kroneckor_matrices, matrix):
     if len(matrix.shape) == 1:
         matrix = np.reshape(matrix, (len(matrix), 1))
@@ -43,7 +72,8 @@ def kron_mat_mult(kroneckor_matrices, matrix):
             'the number of rows in the matrix.')
     output = matrix
     for j in range(num_mats - 1, -1, -1):
-        output = np.reshape(output, (num_cols_kron_mats[j], mat_shape[1] * vec_size // num_cols_kron_mats[j]), 'F')
+        output = np.reshape(output, (num_cols_kron_mats[j], \
+                mat_shape[1] * vec_size // num_cols_kron_mats[j]), 'F')
         output = np.matmul(kroneckor_matrices[j], output)
         vec_size = vec_size * num_rows_kron_mats[j] // num_cols_kron_mats[j]
         output = np.reshape(output, (num_rows_kron_mats[j], mat_shape[1],
@@ -57,9 +87,9 @@ def kron_mat_mult(kroneckor_matrices, matrix):
 # that they might if we use compressed representation?
 # Note: `X_tucker_factors_gram` must be a list of the gram matrices for the
 # current factor matrices (i.e., X_tucker.factors[i].T @ X_tucker.factors[i]).
+# - Matricized version of Eq 4.2 in "Tensor Decompositions and Applications."
 def update_factor_matrix(X_tucker, X_tucker_factors_gram, Y_tensor,
-        factor_index, l2_regularization, debug_mode):
-    # Matricized version of Eq 4.2 in "Tensor Decompositions and Applications."
+        factor_index, l2_regularization, verbose):
     start_time = time.time()
     Y_matrix = tl.unfold(Y_tensor, factor_index)
     core_matrix = tl.unfold(X_tucker.core, factor_index)
@@ -69,7 +99,7 @@ def update_factor_matrix(X_tucker, X_tucker_factors_gram, Y_tensor,
             range(X_tucker.core.ndim) if i != factor_index]
     AtA_lambda = core_matrix @ kron_mat_mult(kron_squares, core_matrix.T) \
         + l2_regularization * np.identity(core_matrix.shape[0])
-    if debug_mode:
+    if verbose:
         #print(' - KtK_lambda shape:', AtA_lambda.shape)
         print(' - KtK_lambda construction time:', time.time() - start_time)
 
@@ -78,7 +108,7 @@ def update_factor_matrix(X_tucker, X_tucker_factors_gram, Y_tensor,
     factors = [X_tucker.factors[i].T for i in range(X_tucker.core.ndim) if i != factor_index]
     tmp = kron_mat_mult(factors, Y_matrix.T)
     response_matrix = tmp.T @ core_matrix.T
-    if debug_mode:
+    if verbose:
         #print(' - KtB shape:', response_matrix.shape)
         print(' - KtB construction time:', time.time() - start_time)
         print(' - num least squares solves:',
@@ -89,14 +119,15 @@ def update_factor_matrix(X_tucker, X_tucker_factors_gram, Y_tensor,
     for row_index in range(X_tucker.factors[factor_index].shape[0]):
         X_tucker.factors[factor_index][row_index, :] = \
             np.linalg.solve(AtA_lambda, response_matrix[row_index, :])
-    if debug_mode:
+    if verbose:
         print(' - total np.linalg.solve() time:',
                 time.time() - start_time)
 
+    # Update Gram matrix of the new factor matrix.
     start_time = time.time()
     X_tucker_factors_gram[factor_index] = X_tucker.factors[factor_index].T @ \
         X_tucker.factors[factor_index]
-    if debug_mode:
+    if verbose:
         print(' - X_tucker factor gram update time:', time.time() - start_time)
 
 # Naive core tensor update that explicitly constructs the design matrix. This
@@ -115,29 +146,28 @@ def update_core_tensor_naive(X_tucker, Y_tensor, l2_regularization):
     X_tucker_core = tl.reshape(np.linalg.solve(AtA_lambda, Atb),
             X_tucker.core.shape)
 
-# Memory-efficient construction of the normal equation for the core tensor
-# update.
+# Memory-efficient construction of the normal equation for core tensor update.
 def update_core_tensor_memory_efficient(X_tucker, X_tucker_factors_gram,
-        Y_tensor, l2_regularization, debug_mode):
+        Y_tensor, l2_regularization, verbose):
     start_time = time.time()
     KtK_lambda = np.identity(1)
     for n in range(len(X_tucker.factors)):
         KtK_lambda = np.kron(KtK_lambda, X_tucker_factors_gram[n])
     KtK_lambda += l2_regularization * np.identity(KtK_lambda.shape[0])
-    if debug_mode:
+    if verbose:
         print(' - KtK_lambda construction time:', time.time() - start_time)
 
     Y_vec = tl.tensor_to_vec(Y_tensor)
     start_time = time.time()
     b = kron_mat_mult([factor.T for factor in X_tucker.factors], Y_vec)
-    if debug_mode:
+    if verbose:
         print(' - Ktb construction time:', time.time() - start_time)
         print(' - solve size:', KtK_lambda.shape, b.shape[0])
 
     start_time = time.time()
     new_core_tensor_vec = np.linalg.solve(KtK_lambda, b)
     X_tucker.core = tl.reshape(new_core_tensor_vec, X_tucker.core.shape)
-    if debug_mode:
+    if verbose:
         print(' - np.linalg.solve() time:', time.time() - start_time)
 
 
@@ -168,11 +198,20 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization,
         step, epsilon, delta, downsampling_ratio, debug_mode):
     global output_file
 
+    # Compute approximate ridge leverage scores for each factor matrix.
     start_time = time.time()
     leverage_scores = [compute_ridge_leverage_scores(factor, 0.0) for factor in X_tucker.factors]
-    end_time = time.time()
     if debug_mode:
-        print(' - leverage score computation time:', end_time - start_time)
+        print(' - leverage score computation time:', time.time() - start_time)
+
+    # Write factor matrices, leverage score estimates, and core to `./tmp/`.
+    start_time = time.time()
+    write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization,
+            epsilon, delta, step, downsampling_ratio)
+    cmd = './row_sampling'
+    os.system(cmd)
+    if debug_mode:
+        print(' - row sampling subroutine time:', time.time() - start_time)
 
     num_original_rows = 1
     num_augmented_rows = 1
@@ -183,15 +222,6 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, l2_regularization,
     num_core_elements = 1
     for dimension in X_tucker.core.shape:
         num_core_elements *= dimension
-
-    start_time = time.time()
-    write_leverage_scores_to_file(leverage_scores, X_tucker, l2_regularization,
-            epsilon, delta, step, downsampling_ratio)
-    cmd = './row_sampling'
-    os.system(cmd)
-    end_time = time.time()
-    if debug_mode:
-        print(' - row sampling subroutine time:', end_time - start_time)
 
     filename = 'sampled_rows.csv'
     with open(filename, 'r') as f:
@@ -267,76 +297,81 @@ def compute_relative_residual_error(Y_tensor, X_tucker):
     return np.linalg.norm(residual_vec) / np.linalg.norm(tl.tensor_to_vec(Y_tensor))
 
 
-def tucker_als(X_tucker, Y_tensor, l2_regularization, algorithm, num_steps,
-        epsilon, delta, downsampling_ratio, debug_mode):
-    global output_file
-
-    num_elements = 1
-    for n in X_tucker.shape:
-        num_elements *= n
-    loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
-
-    X_tucker_factors_gram = [X_tucker.factors[i].T @ X_tucker.factors[i] for i
+#def tucker_als(X_tucker, Y_tensor, l2_regularization, algorithm, num_steps,
+#        epsilon, delta, downsampling_ratio, debug_mode):
+# TODO(fahrbach): Describe this function.
+def tucker_als(Y_tensor, config, output_file, X_tucker=None):
+    # Initialize Tucker decomposition if not provided as input.
+    if X_tucker == None:
+        X_tucker = random_tucker(Y_tensor.shape, config.rank,
+                random_state=config.random_seed)
+    # Maintain the Gram matrix of each factor matrix.
+    X_tucker_factors_gram = [X_tucker.factors[n].T @ X_tucker.factors[n] for n
             in range(X_tucker.core.ndim)]
 
-    for step in range(num_steps):
+    num_elements = np.prod(Y_tensor.shape)
+    loss = compute_loss(Y_tensor, X_tucker, config.l2_regularization_strength)
+
+    for step in range(config.max_num_steps):
         print('step:', step)
         output_file.write('step: ' + str(step) + '\n')
-        output_file.flush()
 
-        # Factor matrix updates.
         for factor_index in range(X_tucker.core.ndim):
-            if debug_mode:
+            if config.verbose:
                 print('Updating factor matrix:', factor_index)
             start_time = time.time()
             update_factor_matrix(X_tucker, X_tucker_factors_gram, Y_tensor,
-                factor_index, l2_regularization, debug_mode)
+                factor_index, config.l2_regularization_strength, config.verbose)
             end_time = time.time()
 
-            new_loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
+            new_loss = compute_loss(Y_tensor, X_tucker, config.l2_regularization_strength)
             rmse = (new_loss / num_elements) ** 0.5
             rre = compute_relative_residual_error(Y_tensor, X_tucker)
             print('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss, rmse,
                 rre, end_time - start_time))
             output_file.write('loss: {} RMSE: {} RRE: {} time: {}'.format(
                 new_loss, rmse, rre, end_time - start_time) + '\n')
-            if debug_mode and new_loss > loss:
+            if new_loss > loss:
                 print('Warning: The loss function increased!')
                 output_file.write('Warning: The loss function increased!\n')
             output_file.flush()
             loss = new_loss
 
-        # Core tensor update.
-        if debug_mode:
+        if config.verbose:
             print('Updating core tensor:')
         start_time = time.time()
-        if algorithm == 'ALS':
-            #update_core_tensor_naive(X_tucker, Y_tensor, l2_regularization)
-            update_core_tensor_memory_efficient(X_tucker,
-                    X_tucker_factors_gram, Y_tensor, l2_regularization,
-                    debug_mode)
-        elif algorithm == 'ALS-RS':
+        if config.algorithm == 'ALS':
+            if config.naive_core_update:
+                update_core_tensor_naive(X_tucker, Y_tensor,
+                        config.l2_regularization_strength)
+            else:
+                update_core_tensor_memory_efficient(X_tucker,
+                        X_tucker_factors_gram, Y_tensor,
+                        config.l2_regularization_strength, config.verbose)
+        elif config.algorithm == 'ALS-RS':
             update_core_tensor_by_row_sampling(X_tucker, Y_tensor,
-                    l2_regularization, step, epsilon, delta, downsampling_ratio,
-                    debug_mode)
+                    l2_regularization, step, epsilon, delta,
+                    downsampling_ratio, debug_mode)
         else:
-            print('algorithm:', algorithm, 'is unsupported.')
-            assert (False)
+            print('algorithm:', config.algorithm, 'is unsupported!')
+            assert(False)
         end_time = time.time()
 
-        new_loss = compute_loss(Y_tensor, X_tucker, l2_regularization)
+        new_loss = compute_loss(Y_tensor, X_tucker,
+                config.l2_regularization_strength)
         rmse = (new_loss / num_elements) ** 0.5
         rre = compute_relative_residual_error(Y_tensor, X_tucker)
         print('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss, rmse, rre,
             end_time - start_time))
         output_file.write('loss: {} RMSE: {} RRE: {} time: {}'.format(new_loss,
             rmse, rre, end_time - start_time) + '\n')
-        if debug_mode and new_loss > loss:
+        if new_loss > loss:
             print('Warning: The loss function increased!')
             output_file.write('Warning: The loss function increased!\n')
         output_file.flush()
         loss = new_loss
         print()
+    return X_tucker
 
 # Creates output filename based on input algorithm parameters, makes output path
 # if it doesn't already exist, and initializes global `output_file` variable.
@@ -559,52 +594,32 @@ def run_image_experiment():
     data_handler.load_image('data/images/nyc.jpg', resize_shape=(500, 320))
     #data_handler.load_image('data/images/nyc.jpg', resize_shape=(2000, 1280))
 
-    dimensions = data_handler.tensor.shape
-    rank = [25, 25, 2]
-    #rank = [50, 50, 3]
-    seed = 2
-    l2_regularization = 0.001
-    steps = 20
-    epsilon = 0.1
-    delta = 0.1
-    downsampling_ratio = 0.001
-    #algorithm = 'ALS-RS'
-    algorithm = 'ALS'
+    config = AlgorithmConfig()
+
+    config.input_shape = data_handler.tensor.shape
+    config.rank = [25, 25, 2]
+    config.l2_regularization = 0.001
+
+    config.algorithm = 'ALS'
+    #config.algorithm = 'ALS-RS'
+    #config.verbose = False
+    print(config)
 
     global output_file
-    init_output_file(data_handler.output_filename_prefix, algorithm, rank, steps)
+    # TODO(fahrbach): Create output_file from data_handler + config.
+    init_output_file(data_handler.output_filename_prefix, config.algorithm,
+            config.rank, config.max_num_steps)
 
     output_file.write('##############################################\n')
+    # TODO(fahrbach): Write info from DataHandler to output_file
     print('input_filename: ', data_handler.input_filename)
     output_file.write('input_filename: ' + data_handler.input_filename + '\n')
 
-    Y = data_handler.tensor
-    #print(Y)
-    #plt.imshow(Y)
-    #plt.show()
+    # TODO(fahrbach): Write AlgorithmConfig + instance stats (e.g., compression)
+    # to output_file.
+    # WriteConfigAndStatsToOutput()
 
-    print('Y.size:', Y.size)
-    output_file.write('Y.size: ' + str(Y.size) + '\n')
-    print('Y.shape: ', Y.shape)
-    output_file.write('Y.shape: ' + str(Y.shape) + '\n')
-
-    print('rank: ', rank)
-    output_file.write('rank: ' + str(rank) + '\n')
-    print('seed: ', seed)
-    output_file.write('seed: ' + str(seed) + '\n')
-    print('algorithm: ', algorithm)
-    output_file.write('algorithm: ' + str(algorithm) + '\n')
-    print('l2_regularization: ', l2_regularization)
-    output_file.write('l2_regularization: ' + str(l2_regularization) + '\n')
-    print('steps: ', steps)
-    output_file.write('steps: ' + str(steps) + '\n')
-    print('epsilon: ', epsilon)
-    output_file.write('epsilon: ' + str(epsilon) + '\n')
-    print('delta: ', delta)
-    output_file.write('delta: ' + str(delta) + '\n')
-    print('downsampling_ratio: ', downsampling_ratio)
-    output_file.write('downsampling_ratio: ' + str(downsampling_ratio) + '\n')
-
+    """
     # Compression factor
     tucker_size = 0
     core_size = 1
@@ -618,12 +633,18 @@ def run_image_experiment():
     print('compression_factor:', compression_factor)
     output_file.write('compression_factor: ' + str(compression_factor) + '\n')
     output_file.flush()
-
-    X_tucker = random_tucker(Y.shape, rank, random_state=seed)
-    tucker_als(X_tucker, Y, l2_regularization, algorithm, steps, epsilon, delta,
-            downsampling_ratio, True)
-
     """
+
+    Y = data_handler.tensor
+    #print(Y)
+    #plt.imshow(Y)
+    #plt.show()
+    X_tucker = random_tucker(Y.shape, config.rank, random_state=config.random_seed)
+    # Inputs: Y, algorithm_config, output_file, X_tucker=None
+    X_tucker = tucker_als(Y, config, output_file, X_tucker=None)
+
+    #tucker_als(X_tucker, Y, config.l2_regularization_strength, config.algorithm, config.max_num_steps, config.epsilon, config.delta, config.downsampling_ratio, config.verbose)
+
     # Plotting the original and reconstruction from the decompositions
     fig = plt.figure()
     ax = fig.add_subplot(1, 2, 1)
@@ -638,7 +659,6 @@ def run_image_experiment():
 
     plt.tight_layout()
     plt.show()
-    """
 
 # ==============================================================================
 # Video Experiments
