@@ -363,8 +363,8 @@ def init_output_file(output_filepath_prefix, algorithm, rank, steps):
 #   ~(1028, 1028, 512) and the rank is (4, 4, 4).
 # ==============================================================================
 def run_synthetic_experiment_1():
-    shape = (100, 100, 100, 100)
-    rank = (4, 4, 4, 4)
+    shape = (50, 50, 100, 100)
+    rank = (4, 4, 10, 4)
     steps = 10
     l2_regularization = 0.001
     seed = 0
@@ -444,7 +444,6 @@ def run_synthetic_shapes_experiment():
     data_handler.load_synthetic_shape(pattern, n, n, 3)
 
     global output_file
-
     output_filename_prefix = data_handler.output_filename_prefix
     output_filename_prefix += '_' + str(n)
     init_output_file(output_filename_prefix, algorithm, rank, steps)
@@ -495,25 +494,28 @@ def run_synthetic_shapes_experiment():
 #   positions (x, y, z, time), and run ALS with and without row sampling.
 # ==============================================================================
 def run_cardiac_mri_experiment():
-    input_filename = 'data/Cardiac_MRI_data/sol_yxzt_pat1.mat'
-    Y = sio.loadmat(input_filename)['sol_yxzt']
+    data_handler = TensorDataHandler()
+    data_handler.load_cardiac_mri_data()
 
-    algorithm = 'ALS-RS'
-    # algorithm = 'ALS'
-    rank = (4, 4, 2, 2)
+    #algorithm = 'ALS-RS'
+    algorithm = 'ALS'
+    rank = (10, 10, 4, 4)
     seed = 0
     l2_regularization = 0.001
-    steps = 3
+    steps = 10
     epsilon = 0.1
     delta = 0.1
     downsampling_ratio = 1.0
 
+    Y = data_handler.tensor
+
     global output_file
-    init_output_file(input_filename, algorithm, rank, steps)
+    output_filename_prefix = data_handler.output_filename_prefix
+    init_output_file(output_filename_prefix, algorithm, rank, steps)
 
     output_file.write('##############################################\n')
-    print('input_filename: ', input_filename)
-    output_file.write('input_filename: ' + input_filename + '\n')
+    print('input_filename: ', data_handler.input_filename)
+    output_file.write('input_filename: ' + data_handler.input_filename + '\n')
 
     print('Y.shape: ', Y.shape)
     output_file.write('Y.shape: ' + str(Y.shape) + '\n')
@@ -537,13 +539,8 @@ def run_cardiac_mri_experiment():
     output_file.flush()
 
     X_tucker = random_tucker(Y.shape, rank, random_state=seed)
-    if algorithm in ['ALS', 'ALS-RS']:
-        os.system('g++-10 -O2 -std=c++11 row_sampling.cc -o row_sampling')
-        run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm, steps, epsilon, delta,
-                                      downsampling_ratio, True)
-
-    X = tl.tucker_to_tensor(X_tucker)
-    print(X)
+    tucker_als(X_tucker, Y, l2_regularization, algorithm, steps, epsilon,
+            delta, downsampling_ratio, True)
 
 def to_image(tensor):
     """A convenience function to convert from a float dtype back to uint8"""
@@ -559,15 +556,15 @@ def to_image(tensor):
 # ==============================================================================
 def run_image_experiment():
     data_handler = TensorDataHandler()
-    data_handler.load_image('data/images/nyc.jpg', resize_shape=(800, 600))
-    #data_handler.load_image('data/images/mina.jpg', resize_shape=(3000, 4000))
-    #data_handler.load_image('data/images/mina.jpg', resize_shape=(300, 400))
+    data_handler.load_image('data/images/nyc.jpg', resize_shape=(500, 320))
+    #data_handler.load_image('data/images/nyc.jpg', resize_shape=(2000, 1280))
 
     dimensions = data_handler.tensor.shape
-    rank = [50, 50, 3]
-    seed = 0
+    rank = [25, 25, 2]
+    #rank = [50, 50, 3]
+    seed = 2
     l2_regularization = 0.001
-    steps = 10
+    steps = 20
     epsilon = 0.1
     delta = 0.1
     downsampling_ratio = 0.001
@@ -583,8 +580,8 @@ def run_image_experiment():
 
     Y = data_handler.tensor
     #print(Y)
-    plt.imshow(Y)
-    plt.show()
+    #plt.imshow(Y)
+    #plt.show()
 
     print('Y.size:', Y.size)
     output_file.write('Y.size: ' + str(Y.size) + '\n')
@@ -626,11 +623,7 @@ def run_image_experiment():
     tucker_als(X_tucker, Y, l2_regularization, algorithm, steps, epsilon, delta,
             downsampling_ratio, True)
 
-    # X = tl.tucker_to_tensor(X_tucker)
-    # print(X)
-    # plt.imshow(X)
-    # plt.show()
-
+    """
     # Plotting the original and reconstruction from the decompositions
     fig = plt.figure()
     ax = fig.add_subplot(1, 2, 1)
@@ -645,6 +638,7 @@ def run_image_experiment():
 
     plt.tight_layout()
     plt.show()
+    """
 
 # ==============================================================================
 # Video Experiments
@@ -713,7 +707,7 @@ def run_video_experiment():
 def main():
     # run_synthetic_experiment_1()
     # run_synthetic_shapes_experiment()
-    # run_cardiac_mri_experiment()
+    #run_cardiac_mri_experiment()
     run_image_experiment()
     # run_video_experiment()
 
