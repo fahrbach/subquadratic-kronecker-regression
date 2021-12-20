@@ -34,6 +34,121 @@ InstanceInfo ReadLeverageScores() {
   return instance_info;
 }
 
+struct AlgorithmConfig {
+  std::vector<int> input_shape;
+  std::vector<int> rank;
+  double l2_regularization_strength;
+  std::string algorithm;
+  int random_seed;
+  double epsilon;
+  double delta;
+  double downsampling_ratio;
+  int max_num_steps;
+  std::string rre_gap_tol;
+  std::string verbose;
+  int step;  // This is not part of the original AlgorithmConfig.
+};
+
+inline double str_to_double(const std::string& s) {
+  stringstream ss(s);
+  double ret;
+  ss >> ret;
+  return ret;
+}
+
+inline int str_to_int(const std::string& s) {
+  stringstream ss(s);
+  int ret;
+  ss >> ret;
+  return ret;
+}
+
+inline std::string int_to_str(const int n) {
+  stringstream ss;
+  ss << n;
+  std::string ret;
+  ss >> ret;
+  return ret;
+}
+
+inline std::string trim_string(const std::string& s) {
+  stringstream ss(s);
+  std::string ret;
+  ss >> ret;
+  return ret;
+}
+
+inline std::vector<int> str_to_vectorint(const std::string& s) {
+  stringstream ss(s);
+  std::vector<int> ret;
+  std::vector<std::string> tokens;
+  while (ss.good()) {
+    std::string token;
+    std::getline(ss, token, ',');
+    tokens.push_back(token);
+  }
+  for (const auto& token : tokens) {
+    std::string clean_token;
+    for (const char c : token) {
+      if (isdigit(c)) clean_token.push_back(c);
+    }
+    ret.push_back(str_to_int(clean_token));
+  }
+  return ret;
+}
+
+AlgorithmConfig ReadAlgorithmConfig() {
+  ifstream file("tmp/algorithm_config.txt");
+  AlgorithmConfig config;
+  string line;
+  while (getline(file, line)) {
+    stringstream ss(line);
+    string field, value;
+    ss >> field;
+    getline(ss, value);
+    // cout << " * " << line << " --> " << field << ": " << value << endl;
+    if (field == "input_shape") {
+      config.input_shape = str_to_vectorint(value);
+    } else if (field == "rank") {
+      config.rank = str_to_vectorint(value);
+    } else if (field == "l2_regularization_strength") {
+      config.l2_regularization_strength = str_to_double(value);
+    } else if (field == "algorithm") {
+      config.algorithm = trim_string(value);
+    } else if (field == "random_seed") {
+      config.random_seed = str_to_int(value);
+    } else if (field == "epsilon") {
+      config.epsilon = str_to_double(value);
+    } else if (field == "delta") {
+      config.delta = str_to_double(value);
+    } else if (field == "downsampling_ratio") {
+      config.downsampling_ratio = str_to_double(value);
+    } else if (field == "max_num_steps") {
+      config.max_num_steps = str_to_int(value);
+    } else if (field == "rre_gap_tol") {
+      config.rre_gap_tol = trim_string(value);
+    } else if (field == "verbose") {
+      config.verbose = trim_string(value);
+    } else if (field == "step") {
+      config.step = str_to_int(value);
+    } else {
+      cout << "Error: Unknown field in ReadAlgorithmConfig()." << endl;
+      assert(false);
+    }
+  }
+  return config;
+}
+
+std::vector<double> ReadVector(const std::string& filename) {
+  std::vector<double> vec;
+  ifstream file(filename);
+  double value;
+  while (file >> value) {
+    vec.push_back(value);
+  }
+  return vec;
+}
+
 // Input:
 // - Cumulative density functions for each of the factor matrices.
 // - K_leverage_score_sum should equal d if l2_regularization = 0.0. Only useful
@@ -86,8 +201,37 @@ inline pair<vector<int>, double> SampleFromAugmentedDistribution(
 }
 
 int main() {
-  const auto instance = ReadLeverageScores();
+  // Read algorithm config, leverage scores, and Tucker decomp from `tmp/` dir.
+  cout << "[row_sampling.cc] read algorithm config" << endl;
+  const AlgorithmConfig config = ReadAlgorithmConfig();
+  const int ndim = config.input_shape.size();
+  assert(config.rank.size() == ndim);
 
+  cout << "[row_sampling.cc] read leverage scores" << endl;
+  vector<vector<double>> leverage_scores(ndim);
+  for (int n = 0; n < ndim; n++) {
+    string filename = "tmp/leverage_scores_";
+    filename += int_to_str(n);
+    filename += "_vec.txt";
+    leverage_scores[n] = ReadVector(filename);
+  }
+  cout << "[row_sampling.cc] read factor matrices" << endl;
+  vector<vector<double>> factor_matrices(ndim);
+  for (int n = 0; n < ndim; n++) {
+    string filename = "tmp/factor_matrix_";
+    filename += int_to_str(n);
+    filename += "_vec.txt";
+    factor_matrices[n] = ReadVector(filename);
+  }
+  cout << "[row_sampling.cc] read core tensor" << endl;
+  vector<double> core_tensor_vec = ReadVector("tmp/core_tensor_vec.txt");
+
+  // Start processing data...
+  cout << "[row_sampling.cc] start doing stuff..." << endl;
+  cout << "[row_sampling.cc] return" << endl;
+  return 0;
+
+  /*
   // Compute number of columns in the design matrix.
   long long d = 1;
   for (int n = 0; n < instance.num_dimensions; n++) {
@@ -105,6 +249,7 @@ int main() {
   rng.seed(instance.step);  // Need to sample different rows in each step.
   uniform_real_distribution<double> uniform_distribution(0.0, 1.0);
 
+  cout << " && preparing sampling distributions..." << endl;
   // Prepare factor matrix leverage score distributions.
   double K_leverage_score_sum = 1.0;
   vector<vector<double>> factor_matrix_ls_cdf(instance.num_dimensions);
@@ -125,7 +270,9 @@ int main() {
       // cout << n << " " << i << " cdf: " << factor_matrix_ls_cdf[n][i] << endl;
     }
   }
+  cout << " && done." << endl;
 
+  cout << " && start drawing " << num_samples << " samples..." << endl;
   // TODO(fahrbach): Upgrade to unordered_map.
   map<pair<vector<int>, double>, int> frequency;
   for (int t = 0; t < num_samples; t++) {
@@ -133,6 +280,7 @@ int main() {
         K_leverage_score_sum, d, rng, uniform_distribution);
     frequency[row_prob]++;
   }
+  cout << " && done " << endl;
 
   ofstream output_file("sampled_rows.csv");
   output_file << frequency.size() << "," << num_samples << endl;
@@ -145,5 +293,6 @@ int main() {
     }
     output_file << probability << "," << freq << endl;
   }
+  */
   return 0;
 }
