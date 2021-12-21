@@ -3,23 +3,32 @@ import tensorly as tl
 import os
 import time
 import matplotlib.pyplot as plt
+import dataclasses
 
 from tensor_data_handler import TensorDataHandler
 from tucker_als import *
 
-# Creates output filename based on input algorithm parameters, makes output path
-# if it doesn't already exist, and initializes global `output_file` variable.
-def init_output_file(output_filepath_prefix, algorithm, rank, steps):
-    global output_file
-
-    output_filename = output_filepath_prefix
-    output_filename += '_' + algorithm
-    output_filename += '_' + ','.join([str(x) for x in rank])
-    output_filename += '_' + str(steps)
+# Initializes and returns output file for logging.
+def init_output_file(data_handler, config):
+    output_filename = data_handler.output_filename_prefix
+    output_filename += '_' + ','.join([str(x) for x in config.input_shape])
+    output_filename += '_' + ','.join([str(x) for x in config.rank])
+    output_filename += '_' + "{:.1e}".format(config.l2_regularization_strength)
+    output_filename += '_' + config.algorithm
     output_filename += '.txt'
 
     os.makedirs(os.path.dirname(output_filename), exist_ok=True)
     output_file = open(output_filename, 'a')
+    
+    output_file.write('##############################################\n')
+    output_file.write('input_filename: ' + data_handler.input_filename + '\n')
+
+    config_dict = dataclasses.asdict(config)
+    for key in config_dict:
+        output_file.write(str(key) + ': ' + str(config_dict[key]) + '\n')
+
+    output_file.flush()
+    return output_file
 
 # ==============================================================================
 # Synthetic Experiment 1:
@@ -224,35 +233,27 @@ def to_image(tensor):
 # ==============================================================================
 def run_image_experiment():
     data_handler = TensorDataHandler()
-    data_handler.load_image('data/images/nyc.jpg', resize_shape=(500, 320))
-    #data_handler.load_image('data/images/nyc.jpg', resize_shape=(2000, 1280))
+    #data_handler.load_image('data/images/nyc.jpg', resize_shape=(500, 320))
+    data_handler.load_image('data/images/nyc.jpg', resize_shape=(2000, 1280))
 
     config = AlgorithmConfig()
 
     config.input_shape = data_handler.tensor.shape
-    config.rank = [25, 25, 2]
+    config.rank = (25, 25, 2)
+    #config.rank = (100, 100, 3)
     config.l2_regularization_strength = 0.001
 
-    #config.algorithm = 'ALS'
-    config.algorithm = 'ALS-RS'
+    config.algorithm = 'ALS'
+    #config.algorithm = 'ALS-RS'
+    #config.algorithm = 'ALS-RSD'
     #config.verbose = False
 
-    config.rre_gap_tol = None
+    #config.rre_gap_tol = None
+
     print(config)
+    output_file = init_output_file(data_handler, config)
 
-    global output_file
-    # TODO(fahrbach): Create output_file from data_handler + config.
-    init_output_file(data_handler.output_filename_prefix, config.algorithm,
-            config.rank, config.max_num_steps)
-
-    output_file.write('##############################################\n')
-    # TODO(fahrbach): Write info from DataHandler to output_file
-    print('input_filename: ', data_handler.input_filename)
-    output_file.write('input_filename: ' + data_handler.input_filename + '\n')
-
-    # TODO(fahrbach): Write AlgorithmConfig + instance stats (e.g., compression)
-    # to output_file.
-    # WriteConfigAndStatsToOutput()
+    # Write and print compression factor.
 
     Y = data_handler.tensor
     #print(Y)

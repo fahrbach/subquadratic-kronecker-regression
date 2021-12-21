@@ -13,6 +13,7 @@ import skvideo.io
 import dataclasses
 
 # TODO(fahrbach): Need to ensure that no new fields are added somehow.
+# Note: If we add fields here, we need to update ReadAlgorithmConfig() protocol.
 @dataclasses.dataclass
 class AlgorithmConfig:
     # Instance info that defines optimization problem.
@@ -155,7 +156,7 @@ def update_core_tensor_memory_efficient(X_tucker, X_tucker_factors_gram,
     if verbose:
         print(' - np.linalg.solve() time:', time.time() - start_time)
 
-
+# TODO(fahrbach): Can probably speed this up.
 def compute_ridge_leverage_scores(A, l2_regularization):
     normal_matrix = A.T @ A + l2_regularization * np.identity(A.shape[1])
     normal_matrix_pinv = np.linalg.pinv(normal_matrix)
@@ -164,13 +165,14 @@ def compute_ridge_leverage_scores(A, l2_regularization):
         leverage_scores[i] = A[i, :] @ normal_matrix_pinv @ A[i, :].T
     return leverage_scores
 
+
 # Writes vectorized version of leverage score vectors, factor matrices, and
 # core tensors to temporary files. The shapes of these np.ndarrays can be
 # reconstructed from the config file.
 def write_regression_instance_to_files(config, leverage_scores, X_tucker, step):
     os.makedirs(os.path.dirname('tmp/'), exist_ok=True)
 
-    with open('tmp/config.txt', 'w') as f:
+    with open('tmp/algorithm_config.txt', 'w') as f:
         config_dict = dataclasses.asdict(config)
         for key in config_dict:
             f.write(str(key) + ' ' + str(config_dict[key]) + '\n')
@@ -202,12 +204,14 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config, step,
     write_regression_instance_to_files(config, leverage_scores, X_tucker, step)
     if debug_mode:
         print(' - write regression instance time:', time.time() - start_time)
-    assert(False)
 
+    # Run C++ sampling subroutine.
+    start_time = time.time()
     cmd = './row_sampling'
     os.system(cmd)
     if debug_mode:
         print(' - row sampling subroutine time:', time.time() - start_time)
+    assert(False)
 
     num_original_rows = 1
     num_augmented_rows = 1
@@ -276,6 +280,110 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config, step,
 
         new_core_vec = np.linalg.solve(SAtSA, SAtb)
         X_tucker.core = tl.reshape(new_core_vec, X_tucker.core.shape)
+
+# Note: Highly experimental.
+def update_core_tensor_by_deterministic_leverage_scores(X_tucker, Y_tensor,
+        config, step, output_file):
+    l2_regularization = config.l2_regularization_strength
+    epsilon = config.epsilon
+    delta = config.delta
+    downsampling_ratio = config.downsampling_ratio
+    debug_mode = config.verbose
+
+    # Compute approximate ridge leverage scores for each factor matrix.
+    start_time = time.time()
+    leverage_scores = [compute_ridge_leverage_scores(factor, 0.0) for factor in
+            X_tucker.factors]
+    if debug_mode:
+        print(' - leverage score computation time:', time.time() - start_time)
+
+    # *Experimental:* Look at the leverage score distribution for each factor.
+    # Row indices ordered in decreasing order by their leverage score.
+    sorted_factor_row_indices = [np.flip(np.argsort(leverage_scores[n])) for n
+            in range(len(X_tucker.factors))]
+
+    sorted_leverage_scores = [leverage_scores[n][sorted_factor_row_indices[n]]
+            for n in range(len(X_tucker.factors))]
+
+    kron_leverage_scores = np.ndarray([1])
+    for n in range(len(sorted_leverage_scores)):
+        print(' - dim:', n, 'num_rows:', sorted_leverage_scores[n].shape[0],
+                'sum leverage socres:', sum(sorted_leverage_scores[n]))
+        kron_leverage_scores = np.kron(kron_leverage_scores,
+                sorted_leverage_scores[n])
+    print(' - kron leverage scores shape:', kron_leverage_scores.shape)
+    kron_leverage_scores = np.flip(np.sort(kron_leverage_scores))
+    # plt.plot(kron_leverage_scores)
+    # plt.show()
+
+    """
+    fig = plt.figure()
+    num_subplots = Y_tensor.ndim + 2
+    for n in range(len(sorted_leverage_scores)):
+        ax = fig.add_subplot(3, 3, n + 1)
+        ax.plot(sorted_leverage_scores[n])
+        ax.set_title('leverage_scores[' + str(n) + ']')
+    ax = fig.add_subplot(3, 3, num_subplots - 1)
+    ax.plot(kron_leverage_scores)
+    ax.set_title('kron_leverage_scores')
+
+    ax = fig.add_subplot(3, 3, num_subplots)
+    ax.plot(np.cumsum(kron_leverage_scores))
+    ax.set_title('kron cdf')
+
+    plt.tight_layout()
+    plt.show()
+    """
+
+    # Use the best rank[n] rows from factor_matrix[n] to get new "factors".
+    truncated_factor_matrices = []
+    num_new_rows = []
+    # TODO(fahrbach): This is a very unbiased sketch and requires row scaling
+    # if it's going to be viable.
+    kRankUpscaling = 10000
+    for n in range(X_tucker.core.ndim):
+        # Experiment: Try uniform subsampling.
+        np.random.shuffle(sorted_factor_row_indices[n])
+
+        new_num_rows = min(config.rank[n] * kRankUpscaling, config.input_shape[n])
+        new_factor = X_tucker.factors[n][sorted_factor_row_indices[n][:new_num_rows]]
+        truncated_factor_matrices.append(new_factor)
+        num_new_rows.append(new_num_rows)
+        print(new_factor.shape, new_num_rows)
+
+    assert(X_tucker.core.ndim == 3)
+    new_response = []
+    for i0 in sorted_factor_row_indices[0][:num_new_rows[0]]:
+        for i1 in sorted_factor_row_indices[1][:num_new_rows[1]]:
+            for i2 in sorted_factor_row_indices[2][:num_new_rows[2]]:
+                #print(i0, i1, i2, ' --> ', Y_tensor[i0, i1, i2])
+                new_response.append(Y_tensor[i0, i1, i2])
+    new_response = np.asarray(new_response)
+    print(' - sampled response shape:', new_response.shape)
+    print(' - sampled response fraction:', new_response.shape[0] / Y_tensor.size)
+
+    # Back to normal core update, but use truncated factor matrices.
+    start_time = time.time()
+    KtK_lambda = np.identity(1)
+    for n in range(len(X_tucker.factors)):
+        KtK_lambda = np.kron(KtK_lambda, truncated_factor_matrices[n].T @
+                truncated_factor_matrices[n])
+    KtK_lambda += l2_regularization * np.identity(KtK_lambda.shape[0])
+    if debug_mode:
+        print(' - KtK_lambda construction time:', time.time() - start_time)
+
+    start_time = time.time()
+    b = kron_mat_mult([factor.T for factor in truncated_factor_matrices], new_response)
+    if debug_mode:
+        print(' - Ktb construction time:', time.time() - start_time)
+        print(' - solve size:', KtK_lambda.shape, b.shape[0])
+
+    start_time = time.time()
+    new_core_tensor_vec = np.linalg.solve(KtK_lambda, b)
+    X_tucker.core = tl.reshape(new_core_tensor_vec, X_tucker.core.shape)
+    if debug_mode:
+        print(' - np.linalg.solve() time:', time.time() - start_time)
+    return
 
 @dataclasses.dataclass
 class LossTerms:
@@ -360,6 +468,9 @@ def tucker_als(Y_tensor, config, output_file=None, X_tucker=None):
         elif config.algorithm == 'ALS-RS':
             update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config,
                     step, output_file)
+        elif config.algorithm == 'ALS-RSD':
+            update_core_tensor_by_deterministic_leverage_scores(X_tucker,
+                    Y_tensor, config, step, output_file)
         else:
             print('algorithm:', config.algorithm, 'is unsupported!')
             assert(False)
