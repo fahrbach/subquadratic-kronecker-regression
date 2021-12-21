@@ -2,6 +2,7 @@ import numpy as np
 from PIL import Image
 import tensorly as tl
 import scipy.io as sio
+import skvideo.io
 
 def get_output_filename_prefix(input_filename):
     tokens = input_filename.split('/')
@@ -16,7 +17,7 @@ class TensorDataHandler:
         self.input_filename = None
         self.output_filename_prefix = None
 
-    def load_random_tucker(self, shape, rank, random_state):
+    def generate_random_tucker(self, shape, rank, random_state=1234):
         self.tensor = tl.random.random_tucker(shape, rank, full=True,
                 random_state=random_state)
         self.output_filename_prefix = 'output/random_tucker/'
@@ -39,3 +40,12 @@ class TensorDataHandler:
         self.input_filename = 'data/cardiac_mri_data/sol_yxzt_pat1.mat'
         self.tensor = sio.loadmat(self.input_filename)['sol_yxzt']
         self.output_filename_prefix = get_output_filename_prefix(self.input_filename)
+
+    # Video in Tucker-TensorSketch paper:
+    # https://github.com/OsmanMalik/tucker-tensorsketch
+    def load_video(self, input_filename):
+        self.input_filename = input_filename
+        print('loading video:', input_filename)
+        self.tensor = skvideo.io.vread(input_filename)
+        print('video shape:', self.tensor.shape)
+        self.output_filename_prefix = get_output_filename_prefix(input_filename)

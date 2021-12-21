@@ -9,7 +9,6 @@ import time
 import matplotlib.pyplot as plt
 from PIL import Image
 import scipy.io as sio
-import skvideo.io
 import dataclasses
 
 # TODO(fahrbach): Need to ensure that no new fields are added somehow.
@@ -19,7 +18,7 @@ class AlgorithmConfig:
     # Instance info that defines optimization problem.
     input_shape: list[int] = None
     rank: list[int] = None
-    l2_regularization_strength: float = 0.0
+    l2_regularization_strength: float = 0.001
 
     # Algorithm parameters.
     algorithm: str = 'ALS' # Expected to be in ['ALS', 'ALS-RS', 'ALS-naive'].
