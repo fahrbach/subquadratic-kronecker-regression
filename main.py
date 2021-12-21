@@ -22,11 +22,21 @@ def init_output_file(data_handler, config):
     
     output_file.write('##############################################\n')
     output_file.write('input_filename: ' + data_handler.input_filename + '\n')
+    print('input_filename:', data_handler.input_filename)
 
     config_dict = dataclasses.asdict(config)
     for key in config_dict:
         output_file.write(str(key) + ': ' + str(config_dict[key]) + '\n')
 
+    # Compute size and compression stats.
+    input_size = np.prod(config.input_shape)
+    tucker_size = np.prod(config.rank)
+    for n in range(len(config.input_shape)):
+        tucker_size += config.input_shape[n] * config.rank[n]
+    output_file.write('input_size: ' + str(input_size) + '\n')
+    output_file.write('tucker_size: ' + str(tucker_size) + '\n')
+    output_file.write('compression: ' + str(tucker_size / input_size) + '\n')
+    print('compression:', str(tucker_size / input_size))
     output_file.flush()
     return output_file
 
