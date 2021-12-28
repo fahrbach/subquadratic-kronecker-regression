@@ -86,64 +86,35 @@ def run_synthetic_experiment():
 #   and rank [4, 4, 3]. Observe that it's only sampling about 0.1% of the rows.
 # ==============================================================================
 def run_synthetic_shapes_experiment():
-    pattern = 'circle'  # ['rectangle', 'swiss', 'circle']
-    n = 100
-    rank = [10, 10, 2]
-    steps = 10
-    l2_regularization = 0.001
-    seed = 0
-    epsilon = 0.1
-    delta = 0.1
-    downsampling_ratio = 1.0
-    algorithm = 'ALS'
-    # algorithm = 'ALS-RS'
-
     data_handler = TensorDataHandler()
-    data_handler.load_synthetic_shape(pattern, n, n, 3)
+    pattern = 'circle'  # ['rectangle', 'swiss', 'circle']
+    data_handler.generate_synthetic_shape(pattern, 200, 200, n_channels=3)
 
-    global output_file
-    output_filename_prefix = data_handler.output_filename_prefix
-    output_filename_prefix += '_' + str(n)
-    init_output_file(output_filename_prefix, algorithm, rank, steps)
+    config = AlgorithmConfig()
+    config.input_shape = data_handler.tensor.shape
+    config.rank = (40, 40, 2)
+    config.algorithm = 'ALS'
+    #config.algorithm = 'ALS-RS'
+    print(config)
 
-    output_file.write('##############################################\n')
+    output_file = init_output_file(data_handler, config)
 
-    # Initialize target tensor Y.
     Y = data_handler.tensor
-    plt.imshow(Y)
-    plt.show()
+    X_tucker = tucker_als(Y, config, output_file, X_tucker=None)
 
-    print('Y.shape: ', Y.shape)
-    output_file.write('Y.shape: ' + str(Y.shape) + '\n')
+    # Plotting the original and reconstruction from the decompositions
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 2, 1)
+    ax.set_axis_off()
+    ax.imshow(to_image(Y))
+    ax.set_title('original')
 
-    print('n: ', n)
-    output_file.write('rank: ' + str(rank) + '\n')
-    print('rank: ', rank)
-    output_file.write('rank: ' + str(rank) + '\n')
-    print('seed: ', seed)
-    output_file.write('seed: ' + str(seed) + '\n')
-    print('l2_regularization: ', l2_regularization)
-    output_file.write('l2_regularization: ' + str(l2_regularization) + '\n')
-    print('steps: ', steps)
-    output_file.write('steps: ' + str(steps) + '\n')
-    print('epsilon: ', epsilon)
-    output_file.write('epsilon: ' + str(epsilon) + '\n')
-    print('delta: ', delta)
-    output_file.write('delta: ' + str(delta) + '\n')
-    print('downsampling_ratio: ', downsampling_ratio)
-    output_file.write('downsampling_ratio: ' + str(downsampling_ratio) + '\n')
-    print('algorithm: ', algorithm)
-    output_file.write('algorithm: ' + str(algorithm) + '\n')
-    output_file.flush()
+    ax = fig.add_subplot(1, 2, 2)
+    ax.set_axis_off()
+    ax.imshow(to_image(tl.tucker_to_tensor(X_tucker)))
+    ax.set_title('Tucker')
 
-    X_tucker = random_tucker(Y.shape, rank, random_state=seed)
-    if algorithm in ['ALS', 'ALS-RS']:
-        os.system('g++-10 -O2 -std=c++11 row_sampling.cc -o row_sampling')
-        run_alternating_least_squares(X_tucker, Y, l2_regularization, algorithm, steps, epsilon, delta,
-                                      downsampling_ratio, True)
-
-    X = tl.tucker_to_tensor(X_tucker)
-    plt.imshow(X)
+    plt.tight_layout()
     plt.show()
 
 # ==============================================================================
@@ -267,8 +238,8 @@ def run_video_experiment():
     X_tucker = tucker_als(Y, config, output_file)
 
 def main():
-    run_synthetic_experiment()
-    # run_synthetic_shapes_experiment()
+    # run_synthetic_experiment()
+    run_synthetic_shapes_experiment()
     # run_cardiac_mri_experiment()
     # run_image_experiment()
     # run_video_experiment()

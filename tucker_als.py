@@ -98,7 +98,7 @@ def update_factor_matrix(X_tucker, X_tucker_factors_gram, Y_tensor,
         print(' - KtB construction time:', time.time() - start_time)
         print(' - num least squares solves:',
                 X_tucker.factors[factor_index].shape[0])
-        print(' - solve size:', AtA_lambda.shape, response_matrix.shape[1])
+        #print(' - solve size:', AtA_lambda.shape, response_matrix.shape[1])
     
     start_time = time.time()
     for row_index in range(X_tucker.factors[factor_index].shape[0]):
@@ -147,7 +147,7 @@ def update_core_tensor_memory_efficient(X_tucker, X_tucker_factors_gram,
     b = kron_mat_mult([factor.T for factor in X_tucker.factors], Y_vec)
     if verbose:
         print(' - Ktb construction time:', time.time() - start_time)
-        print(' - solve size:', KtK_lambda.shape, b.shape[0])
+        #print(' - solve size:', KtK_lambda.shape, b.shape[0])
 
     start_time = time.time()
     new_core_tensor_vec = np.linalg.solve(KtK_lambda, b)
@@ -375,7 +375,7 @@ def update_core_tensor_by_deterministic_leverage_scores(X_tucker, Y_tensor,
     b = kron_mat_mult([factor.T for factor in truncated_factor_matrices], new_response)
     if debug_mode:
         print(' - Ktb construction time:', time.time() - start_time)
-        print(' - solve size:', KtK_lambda.shape, b.shape[0])
+        #print(' - solve size:', KtK_lambda.shape, b.shape[0])
 
     start_time = time.time()
     new_core_tensor_vec = np.linalg.solve(KtK_lambda, b)
