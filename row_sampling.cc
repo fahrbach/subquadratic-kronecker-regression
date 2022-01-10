@@ -265,22 +265,24 @@ int main() {
 
   cout << "[row_sampling.cc] start drawing " << num_samples << " samples..." << endl;
   // TODO(fahrbach): Upgrade to unordered_map.
-  map<pair<vector<int>, double>, int> frequency;
+  map<pair<vector<int>, double>, int> sampled_ridge_rows;
+  vector<pair<vector<int>, double>> sampled_factor_rows;
   for (int t = 0; t < num_samples; t++) {
     auto row_prob = SampleFromAugmentedDistribution(factor_matrix_ls_cdf,
         K_leverage_score_sum, d, rng, uniform_distribution);
-    frequency[row_prob]++;
+    if (row_prob.first[0] == -1) {
+      sampled_ridge_rows[row_prob]++;
+    } else {
+      sampled_factor_rows.push_back(row_prob);
+    }
   }
 
-
-  // TODO(fahrbach): Change output of this subroutine to write factor matrix
-  // indices, vectorized_indices, weights, sample probs. Then reconstruct in
-  // numpy efficiently via scipy.linalg.khatri_rao.
-
+  // Protocol 1: Write everything to sampled_rows.csv.
   cout << "[row_sampling.cc] write sampled indices and probabilities" << endl;
   ofstream output_file("tmp/sampled_rows.csv");
-  output_file << frequency.size() << "," << num_samples << endl;
-  for (const auto& kv : frequency) {
+  output_file << sampled_ridge_rows.size() + sampled_factor_rows.size() << ","
+              << num_samples << endl;
+  for (const auto& kv : sampled_ridge_rows) {
     const vector<int>& row_indices = kv.first.first;
     const double probability = kv.first.second;
     const double freq = kv.second;
@@ -289,6 +291,64 @@ int main() {
     }
     output_file << probability << "," << freq << endl;
   }
+  for (const auto& entry: sampled_factor_rows) {
+    const vector<int>& row_indices = entry.first;
+    const double probability = entry.second;
+    const double freq = 1;
+    for (const int row_index : row_indices) {
+      output_file << row_index << ",";
+    }
+    output_file << probability << "," << freq << endl;
+  }
   cout << "[row_sampling.cc] return" << endl;
+
+  // Protocol 2: Write everything separately.
+  // - sampled_row_indices_factor_matrix_{n}.txt: row of each factor matrix
+  // - sampled_row_indices.txt: combined row index in the Kroneckor matrix K.
+  // - sampled_row_indices_probability.txt: sampling probability of row in K.
+  // - [similar stats for "fake" ridge row indices"]
+  for (int n = 0; n < ndim; n++) {
+    string filename = "tmp/sampled_row_indices_factor_matrix_";
+    filename += int_to_str(n);
+    filename += ".txt";
+    ofstream output_file(filename);
+    output_file << sampled_factor_rows.size() << endl;
+    for (const auto& entry : sampled_factor_rows) {
+      const vector<int>& row_indices = entry.first;
+      output_file << row_indices.at(n) << endl;
+    }
+  }
+  {
+    ofstream output_indices("tmp/sampled_row_indices.txt");
+    ofstream output_probability("tmp/sampled_row_probability.txt");
+    ofstream output_weight("tmp/sampled_row_weight.txt");
+    output_indices << sampled_factor_rows.size() << endl;
+    output_probability << sampled_factor_rows.size() << endl;
+    output_weight << sampled_factor_rows.size() << endl;
+    for (const auto& entry : sampled_factor_rows) {
+      const vector<int>& row_indices = entry.first;
+      const double probability = entry.second;
+      output_indices << -1 << endl;
+      output_probability << probability << endl;
+      output_weight << 1 << endl;  // rows may be duplicated for now.
+    }
+  }
+  {
+    ofstream output_indices("tmp/sampled_ridge_indices.txt");
+    ofstream output_probability("tmp/sampled_ridge_probability.txt");
+    ofstream output_weight("tmp/sampled_ridge_weight.txt");
+    output_indices << sampled_ridge_rows.size() << endl;
+    output_probability << sampled_ridge_rows.size() << endl;
+    output_weight << sampled_ridge_rows.size() << endl;
+    for (const auto& kv : sampled_ridge_rows) {
+      const vector<int>& row_indices = kv.first.first;
+      const double probability = kv.first.second;
+      const double freq = kv.second;
+      assert(row_indices.size() == 2 && row_indices[0] == -1);
+      output_indices << row_indices[1] << endl;
+      output_probability << probability << endl;
+      output_weight << freq << endl;
+    }
+  }
   return 0;
 }
