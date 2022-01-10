@@ -183,6 +183,29 @@ inline pair<vector<int>, double> SampleFromAugmentedDistribution(
   return row_indices_and_probability;
 }
 
+// Can't reliably return an int because if the return value is 0, the
+// subprocess terminates because it thinks it is main()?
+vector<int> ConvertRowIndexToVectorIndex(const vector<int>& coord,
+    const vector<int>& input_shape) {
+  assert(coord.size() == input_shape.size());
+  vector<long long> suffix_products(coord.size());
+  for (int i = input_shape.size() - 1; i >= 0; i--) {
+    if (i == input_shape.size() - 1) {
+      suffix_products[i] = input_shape[i];
+    } else {
+      suffix_products[i] = input_shape[i] * suffix_products[i + 1];
+    }
+  }
+  long long linear_index = 0;
+  for (int i = 0; i < input_shape.size() - 1; i++) {
+    linear_index += suffix_products[i + 1] * coord[i];
+  }
+  linear_index += coord.back();
+  std::vector<int> ret;
+  ret.push_back(linear_index);
+  return ret;
+}
+
 int main() {
   // Read algorithm config, leverage scores, and Tucker decomp from `tmp/` dir.
   cout << "[row_sampling.cc] read algorithm config" << endl;
@@ -264,7 +287,8 @@ int main() {
   cout << "[row_sampling.cc] K_leverage_score_sum: " << K_leverage_score_sum << endl;
 
   cout << "[row_sampling.cc] start drawing " << num_samples << " samples..." << endl;
-  // TODO(fahrbach): Upgrade to unordered_map.
+  // TODO(fahrbach): Upgrade to unordered_map?
+  auto start = std::chrono::steady_clock::now();
   map<pair<vector<int>, double>, int> sampled_ridge_rows;
   vector<pair<vector<int>, double>> sampled_factor_rows;
   for (int t = 0; t < num_samples; t++) {
@@ -276,33 +300,11 @@ int main() {
       sampled_factor_rows.push_back(row_prob);
     }
   }
+  auto end = std::chrono::steady_clock::now();
+  std::chrono::duration<double> elapsed_seconds = end-start;
+  cout << "[row_sampling.cc] total time: " << elapsed_seconds.count() << "s | per sample: " << elapsed_seconds.count() / num_samples << "s" << endl;
 
-  // Protocol 1: Write everything to sampled_rows.csv.
-  cout << "[row_sampling.cc] write sampled indices and probabilities" << endl;
-  ofstream output_file("tmp/sampled_rows.csv");
-  output_file << sampled_ridge_rows.size() + sampled_factor_rows.size() << ","
-              << num_samples << endl;
-  for (const auto& kv : sampled_ridge_rows) {
-    const vector<int>& row_indices = kv.first.first;
-    const double probability = kv.first.second;
-    const double freq = kv.second;
-    for (const int row_index : row_indices) {
-      output_file << row_index << ",";
-    }
-    output_file << probability << "," << freq << endl;
-  }
-  for (const auto& entry: sampled_factor_rows) {
-    const vector<int>& row_indices = entry.first;
-    const double probability = entry.second;
-    const double freq = 1;
-    for (const int row_index : row_indices) {
-      output_file << row_index << ",";
-    }
-    output_file << probability << "," << freq << endl;
-  }
-  cout << "[row_sampling.cc] return" << endl;
-
-  // Protocol 2: Write everything separately.
+  // Write everything to tmp/ separately.
   // - sampled_row_indices_factor_matrix_{n}.txt: row of each factor matrix
   // - sampled_row_indices.txt: combined row index in the Kroneckor matrix K.
   // - sampled_row_indices_probability.txt: sampling probability of row in K.
@@ -312,43 +314,39 @@ int main() {
     filename += int_to_str(n);
     filename += ".txt";
     ofstream output_file(filename);
-    output_file << sampled_factor_rows.size() << endl;
     for (const auto& entry : sampled_factor_rows) {
       const vector<int>& row_indices = entry.first;
-      output_file << row_indices.at(n) << endl;
+      output_file << row_indices.at(n) << "\n";
     }
   }
   {
     ofstream output_indices("tmp/sampled_row_indices.txt");
     ofstream output_probability("tmp/sampled_row_probability.txt");
     ofstream output_weight("tmp/sampled_row_weight.txt");
-    output_indices << sampled_factor_rows.size() << endl;
-    output_probability << sampled_factor_rows.size() << endl;
-    output_weight << sampled_factor_rows.size() << endl;
     for (const auto& entry : sampled_factor_rows) {
       const vector<int>& row_indices = entry.first;
       const double probability = entry.second;
-      output_indices << -1 << endl;
-      output_probability << probability << endl;
-      output_weight << 1 << endl;  // rows may be duplicated for now.
+      vector<int> vector_index =
+        ConvertRowIndexToVectorIndex(row_indices, config.input_shape);
+      output_indices << vector_index.front() << "\n";
+      output_probability << probability << "\n";
+      output_weight << 1 << "\n";  // rows may be duplicated for now.
     }
   }
   {
     ofstream output_indices("tmp/sampled_ridge_indices.txt");
     ofstream output_probability("tmp/sampled_ridge_probability.txt");
     ofstream output_weight("tmp/sampled_ridge_weight.txt");
-    output_indices << sampled_ridge_rows.size() << endl;
-    output_probability << sampled_ridge_rows.size() << endl;
-    output_weight << sampled_ridge_rows.size() << endl;
     for (const auto& kv : sampled_ridge_rows) {
       const vector<int>& row_indices = kv.first.first;
       const double probability = kv.first.second;
       const double freq = kv.second;
-      assert(row_indices.size() == 2 && row_indices[0] == -1);
-      output_indices << row_indices[1] << endl;
-      output_probability << probability << endl;
-      output_weight << freq << endl;
+      //assert(row_indices.size() == 2 && row_indices[0] == -1);
+      output_indices << row_indices[1] << "\n";
+      output_probability << probability << "\n";
+      output_weight << freq << "\n";
     }
   }
+  cout << "[row_sampling.cc] return" << endl;
   return 0;
 }

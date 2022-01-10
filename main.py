@@ -172,16 +172,14 @@ def run_cardiac_mri_experiment():
     tucker_als(X_tucker, Y, l2_regularization, algorithm, steps, epsilon,
             delta, downsampling_ratio, True)
 
-
-
 # ==============================================================================
 # Image Experiments
 # - Read 3-way image tensor (x, y, RGB channel).
 # ==============================================================================
 def run_image_experiment():
     data_handler = TensorDataHandler()
-    #data_handler.load_image('data/images/nyc.jpg', resize_shape=(500, 320))
-    data_handler.load_image('data/images/nyc.jpg', resize_shape=(2000, 1280))
+    data_handler.load_image('data/images/nyc.jpg', resize_shape=(500, 320))
+    #data_handler.load_image('data/images/nyc.jpg', resize_shape=(2000, 1280))
 
     config = AlgorithmConfig()
 
@@ -190,9 +188,8 @@ def run_image_experiment():
     #config.rank = (100, 100, 3)
     #config.l2_regularization_strength = 0.001
 
-    config.algorithm = 'ALS'
-    #config.algorithm = 'ALS-RS'
-    #config.algorithm = 'ALS-RSD'
+    #config.algorithm = 'ALS'
+    config.algorithm = 'ALS-RS'
     print(config)
 
     output_file = init_output_file(data_handler, config)
@@ -238,10 +235,10 @@ def run_video_experiment():
     X_tucker = tucker_als(Y, config, output_file)
 
 def main():
-    run_synthetic_experiment()
+    # run_synthetic_experiment()
     # run_synthetic_shapes_experiment()
     # run_cardiac_mri_experiment()
-    # run_image_experiment()
+    run_image_experiment()
     # run_video_experiment()
 
 
