@@ -1,38 +1,7 @@
+// g++ -O2 row_sampling.cc -o row_sampling
+
 #include <bits/stdc++.h>
 using namespace std;
-
-struct InstanceInfo {
-  int num_dimensions, step;
-  double l2_regularization, epsilon, delta, alpha;
-  // Factor matrices:
-  std::vector<int> num_rows, num_cols;
-  std::vector<double> factor_norms;
-  std::vector<std::vector<double>> leverage_scores;
-};
-
-InstanceInfo ReadLeverageScores() {
-  ifstream file("leverage_scores.txt");
-  InstanceInfo instance_info;
-  file >> instance_info.num_dimensions;
-  file >> instance_info.l2_regularization;
-  file >> instance_info.epsilon;
-  file >> instance_info.delta;
-  file >> instance_info.step;
-  file >> instance_info.alpha;
-  for (int n = 0; n < instance_info.num_dimensions; n++) {
-    int num_rows, num_cols;
-    double factor_norm;
-    file >> num_rows >> num_cols >> factor_norm;
-    instance_info.num_rows.push_back(num_rows);
-    instance_info.num_cols.push_back(num_cols);
-    instance_info.factor_norms.push_back(factor_norm);
-
-    std::vector<double> leverage_scores(num_rows);
-    for (int i = 0; i < num_rows; i++) file >> leverage_scores[i];
-    instance_info.leverage_scores.push_back(leverage_scores);
-  }
-  return instance_info;
-}
 
 struct AlgorithmConfig {
   std::vector<int> input_shape;
@@ -149,10 +118,26 @@ std::vector<double> ReadVector(const std::string& filename) {
   return vec;
 }
 
+using Matrix = std::vector<std::vector<double>>;
+
+Matrix ReshapeVectorizedMatrixToMatrix(const std::vector<double>& v, const int
+    num_rows, const int num_cols) {
+  assert(v.size() == num_rows * num_cols);
+  Matrix matrix(num_rows, std::vector<double>(num_cols));
+  int idx = 0;
+  for (int i = 0; i < num_rows; ++i) {
+    for (int j = 0; j < num_cols; ++j) {
+      matrix[i][j] = v[idx];
+      idx++;
+    }
+  }
+  return matrix;
+}
+
 // Input:
-// - Cumulative density functions for each of the factor matrices.
-// - K_leverage_score_sum should equal d if l2_regularization = 0.0. Only useful
-//   as we generalize to ridge leverage scores.
+// - Cumulative density functions for each factor matrix.
+// - K_leverage_score_sum equals d if l2_regularization = 0.0. Only useful as we
+//   generalize to ridge leverage scores.
 // - d is the number of columns (i.e., the rank of the augmented design matrix).
 // - Mutable RNG.
 //
@@ -187,14 +172,12 @@ inline pair<vector<int>, double> SampleFromAugmentedDistribution(
       row_indices.push_back(row_index);
       probability *= p;
     }
-    row_indices_and_probability.first = row_indices;
-    row_indices_and_probability.second = probability;
+    row_indices_and_probability = {row_indices, probability};
   } else {
     r = uniform_distribution(rng);
     int row_index = r * d;
     if (row_index == d) row_index--;
-    row_indices_and_probability.first = {-1, row_index};
-    row_indices_and_probability.second = 1.0 / Z;
+    row_indices_and_probability = {{-1, row_index}, 1.0 / Z};
     // cout << "sample ridge row: " << row_index << " " << 1.0 / Z << endl;
   }
   return row_indices_and_probability;
@@ -216,63 +199,71 @@ int main() {
     leverage_scores[n] = ReadVector(filename);
   }
   cout << "[row_sampling.cc] read factor matrices" << endl;
-  vector<vector<double>> factor_matrices(ndim);
+  vector<Matrix> factor_matrices(ndim);
   for (int n = 0; n < ndim; n++) {
     string filename = "tmp/factor_matrix_";
     filename += int_to_str(n);
     filename += "_vec.txt";
-    factor_matrices[n] = ReadVector(filename);
+    std::vector<double> vectorized_matrix = ReadVector(filename); 
+    factor_matrices[n] = ReshapeVectorizedMatrixToMatrix(vectorized_matrix,
+        config.input_shape[n], config.rank[n]);
+    cout << "[row_sampling.cc] " << " - dim " << n << ": "
+         << factor_matrices[n].size() << " " << factor_matrices[n][0].size() << endl;
   }
   cout << "[row_sampling.cc] read core tensor" << endl;
   vector<double> core_tensor_vec = ReadVector("tmp/core_tensor_vec.txt");
 
+  // Note: This is one approach to constructing the sketched instance. It is
+  // almost definitely too slow, though.
+  //cout << "[row_sampling.cc] read input tensor (vectorized)" << endl;
+  //vector<double> input_tensor_vec = ReadVector("tmp/input_tensor_vec.txt");
+
   // Start processing data...
   cout << "[row_sampling.cc] start doing stuff..." << endl;
-  cout << "[row_sampling.cc] return" << endl;
-  return 0;
-
-  /*
-  // Compute number of columns in the design matrix.
+  
+  // Compute number of required samples.
   long long d = 1;
-  for (int n = 0; n < instance.num_dimensions; n++) {
-    d *= instance.num_cols[n];
+  for (int n = 0; n < ndim; n++) {
+    d *= config.rank[n];
   }
-  const double epsilon = instance.epsilon;
-  const double delta = instance.delta;
+  const double epsilon = config.epsilon;
+  const double delta = config.delta;
   double sample_term_1 = 420 * log(4*d / delta);
   double sample_term_2 = pow(delta * epsilon, -1);
   long long num_samples = 4 * d * 2 * max(sample_term_1, sample_term_2);
-  // NOTE: Lowering the sample complexity even more to see if we lose solve accuracy.
-  num_samples *= instance.alpha;
+  // NOTE: Lower sample complexity even more to see if we lose solve accuracy.
+  num_samples *= config.downsampling_ratio;
+  cout << "[row_sampling.cc] num_samples: " << num_samples << endl;
 
+  // Set up RNG.
   mt19937 rng;
-  rng.seed(instance.step);  // Need to sample different rows in each step.
+  rng.seed(config.step);  // Need to sample different rows in each step.
   uniform_real_distribution<double> uniform_distribution(0.0, 1.0);
 
-  cout << " && preparing sampling distributions..." << endl;
-  // Prepare factor matrix leverage score distributions.
+  // Prepare each factor's leverage score sampling distribution.
+  cout << "[row_sampling.cc] prepare leverage score distributions" << endl;
   double K_leverage_score_sum = 1.0;
-  vector<vector<double>> factor_matrix_ls_cdf(instance.num_dimensions);
-  for (int n = 0; n < instance.num_dimensions; n++) {
+  vector<vector<double>> factor_matrix_ls_cdf(ndim);
+  for (int n = 0; n < ndim; n++) {
     double factor_matrix_leverage_score_sum = 0.0;
-    for (int i = 0; i < instance.num_rows[n]; i++) {
-      factor_matrix_leverage_score_sum += instance.leverage_scores[n][i];
+    for (int i = 0; i < config.input_shape[n]; i++) {
+      factor_matrix_leverage_score_sum += leverage_scores[n][i];
     }
     K_leverage_score_sum *= factor_matrix_leverage_score_sum;
 
-    factor_matrix_ls_cdf[n] = vector<double>(instance.num_rows[n]);
-    for (int i = 0; i < instance.num_rows[n]; i++) {
-      factor_matrix_ls_cdf[n][i] = instance.leverage_scores[n][i];
+    factor_matrix_ls_cdf[n] = vector<double>(config.input_shape[n]);
+    for (int i = 0; i < config.input_shape[n]; i++) {
+      factor_matrix_ls_cdf[n][i] = leverage_scores[n][i];
       if (i > 0) factor_matrix_ls_cdf[n][i] += factor_matrix_ls_cdf[n][i - 1];
     }
-    for (int i = 0; i < instance.num_rows[n]; i++) {
+    for (int i = 0; i < config.input_shape[n]; i++) {
       factor_matrix_ls_cdf[n][i] /= factor_matrix_leverage_score_sum;
       // cout << n << " " << i << " cdf: " << factor_matrix_ls_cdf[n][i] << endl;
     }
   }
-  cout << " && done." << endl;
+  cout << "[row_sampling.cc] K_leverage_score_sum: " << K_leverage_score_sum << endl;
 
-  cout << " && start drawing " << num_samples << " samples..." << endl;
+  cout << "[row_sampling.cc] start drawing " << num_samples << " samples..." << endl;
   // TODO(fahrbach): Upgrade to unordered_map.
   map<pair<vector<int>, double>, int> frequency;
   for (int t = 0; t < num_samples; t++) {
@@ -280,9 +271,14 @@ int main() {
         K_leverage_score_sum, d, rng, uniform_distribution);
     frequency[row_prob]++;
   }
-  cout << " && done " << endl;
 
-  ofstream output_file("sampled_rows.csv");
+
+  // TODO(fahrbach): Change output of this subroutine to write factor matrix
+  // indices, vectorized_indices, weights, sample probs. Then reconstruct in
+  // numpy efficiently via scipy.linalg.khatri_rao.
+
+  cout << "[row_sampling.cc] write sampled indices and probabilities" << endl;
+  ofstream output_file("tmp/sampled_rows.csv");
   output_file << frequency.size() << "," << num_samples << endl;
   for (const auto& kv : frequency) {
     const vector<int>& row_indices = kv.first.first;
@@ -293,6 +289,6 @@ int main() {
     }
     output_file << probability << "," << freq << endl;
   }
-  */
+  cout << "[row_sampling.cc] return" << endl;
   return 0;
 }

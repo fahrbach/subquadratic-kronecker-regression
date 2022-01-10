@@ -27,7 +27,7 @@ class AlgorithmConfig:
     # Parameters specific to 'ALS-RS'
     epsilon: float = 0.1
     delta: float = 0.1
-    downsampling_ratio: float = 0.001
+    downsampling_ratio: float = 0.01 # 1.0 # 0.001
 
     # Loop termination criteria.
     max_num_steps: int = 20
@@ -182,6 +182,7 @@ def write_regression_instance_to_files(config, leverage_scores, X_tucker, step):
         np.savetxt(f'tmp/factor_matrix_{n}_vec.txt',
                 tl.tensor_to_vec(X_tucker.factors[n]))
     np.savetxt('tmp/core_tensor_vec.txt', tl.tensor_to_vec(X_tucker.core))
+    # np.savetxt('tmp/input_tensor_vec.txt', tl.tensor_to_vec(Y_tensor))
 
 def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config, step,
         output_file):
@@ -210,7 +211,7 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config, step,
     os.system(cmd)
     if debug_mode:
         print(' - row sampling subroutine time:', time.time() - start_time)
-    assert(False)
+    # assert(False)
 
     num_original_rows = 1
     num_augmented_rows = 1
@@ -222,7 +223,7 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config, step,
     for dimension in X_tucker.core.shape:
         num_core_elements *= dimension
 
-    filename = 'sampled_rows.csv'
+    filename = 'tmp/sampled_rows.csv'
     with open(filename, 'r') as f:
         lines = f.readlines()
         num_merged_rows, num_sampled_rows = [int(_) for _ in lines[0].split(',')]
@@ -244,8 +245,8 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config, step,
         if debug_mode:
             print(' - sampled augmented design matrix shape:', design_matrix.shape)
         for line_index in range(1, len(lines)):
-            if line_index % 100 == 0:
-                print(line_index, line_index / len(lines))
+            #if line_index % 100 == 0:
+            #    print(line_index, line_index / len(lines))
             line = lines[line_index].strip().split(',')
             sketched_row_index = line_index - 1
             shape_indices = [int(_) for _ in line[:-2]]

@@ -62,20 +62,20 @@ def to_image(tensor):
 # ==============================================================================
 def run_synthetic_experiment():
     data_handler = TensorDataHandler()
-    data_handler.generate_random_tucker(shape=(100, 100, 100, 100),
-            rank=(10, 10, 10, 10), random_state=1234)
+    data_handler.generate_random_tucker(shape=(100, 200, 300),
+            rank=(10, 20, 30), random_state=1234)
 
     config = AlgorithmConfig()
     config.input_shape = data_handler.tensor.shape
-    config.rank = (5, 5, 5, 2)
-    config.algorithm = 'ALS'
-    #config.algorithm = 'ALS-RS'
+    config.rank = (2, 4, 6)
+    #config.algorithm = 'ALS'
+    config.algorithm = 'ALS-RS'
     print(config)
 
     output_file = init_output_file(data_handler, config)
 
     Y = data_handler.tensor
-    Y[(0, 0, 0, 0)] = 0
+    Y[(0, 0, 0)] = 0
     X_tucker = tucker_als(Y, config, output_file)
 
 # ==============================================================================
@@ -238,8 +238,8 @@ def run_video_experiment():
     X_tucker = tucker_als(Y, config, output_file)
 
 def main():
-    # run_synthetic_experiment()
-    run_synthetic_shapes_experiment()
+    run_synthetic_experiment()
+    # run_synthetic_shapes_experiment()
     # run_cardiac_mri_experiment()
     # run_image_experiment()
     # run_video_experiment()
