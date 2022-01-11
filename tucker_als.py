@@ -4,13 +4,13 @@ from tensorly.decomposition import parafac
 from tensorly.decomposition import tucker
 from tensorly.datasets import synthetic
 from tensorly.random import random_tucker
-from tensorly.tenalg import khatri_rao
 import os
 import time
 import matplotlib.pyplot as plt
 from PIL import Image
 import scipy.io as sio
 import dataclasses
+from scipy import linalg
 
 # TODO(fahrbach): Need to ensure that no new fields are added somehow.
 # Note: If we add fields here, we need to update ReadAlgorithmConfig() protocol.
@@ -240,24 +240,29 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config, step,
 
     # The row-sampled design matrix is a transposed Khatri Rao product of the
     # sampled factor matrices.
-    # TODO(fahrbach): This is now a memory hot spot...
-    sampled_K_T = khatri_rao([A.T for A in sampled_factor_matrices])
-    sampled_K = sampled_K_T.T
+    tmp = sampled_factor_matrices[0].T
+    for i in range(1, X_tucker.core.ndim):
+        tmp = linalg.khatri_rao(tmp, sampled_factor_matrices[i].T)
+    sampled_K = tmp.T
     print(sampled_K.shape)
     if debug_mode:
         print(' - constructing sampled K time:', time.time() - start_time)
+    del sampled_factor_matrices
 
     Y_vec = tl.tensor_to_vec(Y_tensor)
     response_vec = Y_vec[sampled_row_indices] # not rescaled yet
+    del Y_vec
     rescaling_coefficients = np.sqrt(sampled_row_weight / (num_samples * sampled_row_probability))
 
+    d = sampled_K.shape[1]
     SK = np.einsum('i,ij->ij', rescaling_coefficients, sampled_K)
+    del sampled_K
+
     Sb = rescaling_coefficients * response_vec
     print('SK.shape:', SK.shape)
     print('Sb.shape:', Sb.shape)
 
     # Create appended ridge problem.
-    d = sampled_K.shape[1]
     lambda_I = np.identity(d) * config.l2_regularization_strength**0.5
     print(lambda_I.shape)
     augmented_b = np.zeros(d)
@@ -271,17 +276,12 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config, step,
     Slambda_I = np.einsum('i,ij->ij', ridge_rescaling, lambda_I)
     print(Slambda_I.shape)
 
-    K_stacked = np.vstack((SK, Slambda_I))
     print(Sb.shape)
     print(augmented_b.shape)
-    b_stacked = np.append(Sb, augmented_b)
-    print(K_stacked.shape)
-    print(b_stacked.shape)
 
-    SAtSA = K_stacked.T @ K_stacked
-    SKb = K_stacked.T @ b_stacked
+    SAtSA = SK.T @ SK + Slambda_I.T @ Slambda_I
 
-    new_core_vec = np.linalg.solve(SAtSA, SKb)
+    new_core_vec = np.linalg.solve(SAtSA, SK.T @ Sb)
     X_tucker.core = tl.reshape(new_core_vec, X_tucker.core.shape)
 
 @dataclasses.dataclass
