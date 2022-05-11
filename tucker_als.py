@@ -300,8 +300,9 @@ def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config, step,
     new_core_vec = np.linalg.solve(SAtSA, SK.T @ Sb)
     X_tucker.core = tl.reshape(new_core_vec, X_tucker.core.shape)
 
-def update_core_tensor_by_row_sampling_all_numpy(X_tucker, Y_tensor, config, step,
-        output_file):
+# Sampling + Richardson iteration
+def update_core_tensor_by_row_sampling_all_numpy(X_tucker,
+        X_tucker_factors_gram, Y_tensor, config, step, output_file):
     l2_regularization = config.l2_regularization_strength
     epsilon = config.epsilon
     delta = config.delta
@@ -370,9 +371,105 @@ def update_core_tensor_by_row_sampling_all_numpy(X_tucker, Y_tensor, config, ste
     # Create appended ridge problem.
     SAtSA = SK.T @ SK + np.identity(d) * config.l2_regularization_strength
 
-    new_core_vec = np.linalg.solve(SAtSA, SK.T @ Sb)
+    # Solve with least squares explicitly.
+    #new_core_vec = np.linalg.solve(SAtSA, SK.T @ Sb)
+    #X_tucker.core = tl.reshape(new_core_vec, X_tucker.core.shape)
+
+    # Perform Richardson iterations
+    gram_pinv = [np.linalg.pinv(gram) for gram in X_tucker_factors_gram]
+
+    KtStSb = SK.T @ Sb
+    KtStSb = np.reshape(KtStSb, (len(KtStSb), 1))
+
+    x = np.zeros(KtStSb.shape)
+    x = np.reshape(x, (len(x), 1))
+
+    for t in range(100):
+        y = SK.T @ (SK @ x) - KtStSb
+        z = x - (1 - epsilon**0.5) * kron_mat_mult(gram_pinv, y)
+        if t > 0:
+            rre = np.linalg.norm(z - x) / np.linalg.norm(x)
+        else:
+            rre = 100000
+        x = z
+        #print('step', t, 'rre', rre)
+        if rre < 1e-6:
+            break
+    X_tucker.core = tl.reshape(x, X_tucker.core.shape)
+
+def update_core_tensor_with_DJSSW19_all_numpy(X_tucker, Y_tensor, config, step,
+        output_file):
+    l2_regularization = config.l2_regularization_strength
+    epsilon = config.epsilon
+    delta = config.delta
+    downsampling_ratio = config.downsampling_ratio
+    debug_mode = config.verbose
+    
+    d = 1
+    for n in range(X_tucker.core.ndim):
+        d *= config.rank[n]
+
+    # Compute approximate ridge leverage scores for each factor matrix.
+    start_time = time.time()
+    leverage_scores = [compute_ridge_leverage_scores(factor, 0.0) for factor in
+            X_tucker.factors]
+    if debug_mode:
+        print(' - leverage score computation time:', time.time() - start_time)
+        
+    sample_term_1 = 420 * np.log(4*d / delta)
+    sample_term_2 = np.power(delta * epsilon, -1)
+    num_samples = 4 * d * 2 * np.maximum(sample_term_1, sample_term_2)
+    num_samples = int(np.ceil(num_samples * config.downsampling_ratio))
+    # 9710925      # old version
+    # 1687583      # new version
+    if debug_mode:
+        print(' - num_samples:', num_samples)
+    
+    start_time = time.time()
+    
+    sampled_factor_matrices = []
+    sampled_row_probability = np.ones(num_samples)
+    sampled_row_indices_all = []
+    for n in range(X_tucker.core.ndim):
+        sum_ls = np.sum(leverage_scores[n])
+        sampled_row_indices = np.random.choice(range(config.input_shape[n]),
+                size=num_samples, p=list(leverage_scores[n] / sum_ls))
+        sampled_row_probability = np.multiply(sampled_row_probability,
+                leverage_scores[n][sampled_row_indices] / sum_ls)
+        sampled_factor_matrices.append(X_tucker.factors[n][sampled_row_indices,:])
+        sampled_row_indices_all.append(sampled_row_indices)
+
+    # The row-sampled design matrix is a transposed Khatri Rao product of the
+    # sampled factor matrices.
+    tmp = sampled_factor_matrices[0].T
+    for i in range(1, X_tucker.core.ndim):
+        tmp = linalg.khatri_rao(tmp, sampled_factor_matrices[i].T)
+    sampled_K = tmp.T
+    if debug_mode:
+        print(sampled_K.shape)
+        print(' - constructing sampled K time:', time.time() - start_time)
+    del sampled_factor_matrices
+
+    rescaling_coefficients = np.sqrt(np.ones(num_samples) / (num_samples * sampled_row_probability))
+
+    d = sampled_K.shape[1]
+    SK = np.einsum('i,ij->ij', rescaling_coefficients, sampled_K)
+    del sampled_K
+
+    # Convert from tensor index notation to vectorized indices.
+    sampled_response_indices = np.ravel_multi_index(sampled_row_indices_all,
+            Y_tensor.shape)
+    Y_vec = tl.tensor_to_vec(Y_tensor)
+    response_vec = Y_vec[sampled_response_indices] # not rescaled yet
+    del Y_vec
+    Sb = rescaling_coefficients * response_vec
+
+    assert(config.l2_regularization_strength == 0.0)
+    new_core_vec = np.linalg.pinv(SK) @ Sb
     X_tucker.core = tl.reshape(new_core_vec, X_tucker.core.shape)
 
+
+# Old -- uses slower IO for sampling.
 # Still some slight unncessary memory useage, but overall it's much better.
 def update_core_tensor_by_row_sampling_and_richardson(X_tucker, X_tucker_factors_gram,
         Y_tensor, config, step, output_file):
@@ -635,15 +732,19 @@ def tucker_als(Y_tensor, config, output_file=None, X_tucker=None):
             update_core_tensor_memory_efficient(X_tucker,
                     X_tucker_factors_gram, Y_tensor,
                     config.l2_regularization_strength, config.verbose)
+        elif config.algorithm == 'ALS-RS-Richardson-numpy':
+            update_core_tensor_by_row_sampling_all_numpy(X_tucker,
+                    X_tucker_factors_gram, Y_tensor, config, step, output_file)
+        elif config.algorithm == 'ALS-DJSSW19-numpy':
+            update_core_tensor_with_DJSSW19_all_numpy(X_tucker, Y_tensor,
+                    config, step, output_file)
+        # Old implementations.
         elif config.algorithm == 'ALS-naive':
             update_core_tensor_naive(X_tucker, Y_tensor,
                     config.l2_regularization_strength)
         elif config.algorithm == 'ALS-RS':
             update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config,
                     step, output_file)
-        elif config.algorithm == 'ALS-RS-numpy':
-            update_core_tensor_by_row_sampling_all_numpy(X_tucker, Y_tensor,
-                    config, step, output_file)
         elif config.algorithm == 'ALS-RS-Richardson':
             update_core_tensor_by_row_sampling_and_richardson(X_tucker,
                     X_tucker_factors_gram,
