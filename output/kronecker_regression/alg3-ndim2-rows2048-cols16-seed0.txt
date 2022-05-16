@@ -1,0 +1,7 @@
+###################################
+2022-05-16 12:23:01.845312
+Namespace(ndim=2, rows=2048, cols=16, alg=3, seed=0, l2_regularization=0.001, epsilon=0.1, delta=0.01, alpha=1.0, samples=1028)
+Ktb: (256, 1)
+tmp: (256, 1)
+time: 0.503859308
+loss: 0.5243836699445313
