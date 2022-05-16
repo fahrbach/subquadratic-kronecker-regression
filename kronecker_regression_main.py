@@ -107,7 +107,7 @@ def kronecker_regression_algorithm_03(factors, l2_regularization):
 # - epsilon: approximation guarantee for least squares error
 # - delta: failure probability
 # - alpha: downsampling factor
-def kronecker_regression_algorithm_04(factors, l2_regularization, epsilon, delta, alpha):
+def kronecker_regression_algorithm_04(factors, l2_regularization, epsilon, delta, alpha, samples):
     start = time.process_time()
 
     ls = [compute_ridge_leverage_scores(factor, 0.0) for factor in factors] 
@@ -117,6 +117,8 @@ def kronecker_regression_algorithm_04(factors, l2_regularization, epsilon, delta
         num_columns *= factor.shape[1]
     print('num_columns:', num_columns)
     num_samples = int(alpha * 1680 * num_columns * np.log(40 * num_columns) * np.log(1.0 / delta) / epsilon)
+    if samples > 0:
+        num_samples = min(num_samples, samples)
     print('num_samples:', num_samples)
 
     # Row sampling code from core tensor update.
@@ -162,7 +164,7 @@ def kronecker_regression_algorithm_04(factors, l2_regularization, epsilon, delta
 # - epsilon: approximation guarantee for least squares error
 # - delta: failure probability
 # - alpha: downsampling factor
-def kronecker_regression_algorithm_05(factors, l2_regularization, epsilon, delta, alpha):
+def kronecker_regression_algorithm_05(factors, l2_regularization, epsilon, delta, alpha, samples):
     start = time.process_time()
 
     ls = [compute_ridge_leverage_scores(factor, 0.0) for factor in factors] 
@@ -172,6 +174,8 @@ def kronecker_regression_algorithm_05(factors, l2_regularization, epsilon, delta
         num_columns *= factor.shape[1]
     print('num_columns:', num_columns)
     num_samples = int(alpha * 1680 * num_columns * np.log(40 * num_columns) * np.log(1.0 / delta) / epsilon)
+    if samples > 0:
+        num_samples = min(num_samples, samples)
     print('num_samples:', num_samples)
 
     # Row sampling code from core tensor update.
@@ -255,6 +259,7 @@ parser.add_argument('--l2_regularization', type=float, default=1e-3)
 parser.add_argument('--epsilon', type=float, default=0.1)
 parser.add_argument('--delta', type=float, default=0.1)
 parser.add_argument('--alpha', type=float, default=1.0)
+parser.add_argument('--samples', type=int, default=0)  # NOTE: 0 means None.
 
 def main():
     print('###################################')
@@ -274,6 +279,7 @@ def main():
     epsilon = args.epsilon
     delta = args.delta
     alpha = args.alpha
+    samples = args.samples
 
     factors = create_regression_experiment_01(ndim, num_rows, num_cols, seed)
 
@@ -284,9 +290,9 @@ def main():
     elif algorithm == 3:
         kronecker_regression_algorithm_03(factors, l2_regularization)
     elif algorithm == 4:
-        kronecker_regression_algorithm_04(factors, l2_regularization, epsilon, delta, alpha)
+        kronecker_regression_algorithm_04(factors, l2_regularization, epsilon, delta, alpha, samples)
     elif algorithm == 5:
-        kronecker_regression_algorithm_05(factors, l2_regularization, epsilon, delta, alpha)
+        kronecker_regression_algorithm_05(factors, l2_regularization, epsilon, delta, alpha, samples)
     else:
         print('Invalid algorithm:', algorithm)
 

@@ -7,12 +7,13 @@ import os
 # restarts from there.
 
 def main():
-    ndim_list = [1, 2, 3]
-    rows_list = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
+    ndim_list = [2]
+    rows_list = [128, 256, 512, 1024, 2048, 4096]
     cols_list = [2, 4, 8, 16, 32, 64, 128]
-    alg_list = [1, 2, 3, 4, 5]
+    alg_list = [3, 5] # [1, 2, 3, 4, 5]
     seed_list = [0] # [0, 1, 2, 3, 4]
 
+    samples_list = [1028]
     alpha_list = [0.01]
     epsilon_list = [0.1]
     delta_list = [0.01]
@@ -25,12 +26,12 @@ def main():
                 if cols > rows: continue
                 for alg in alg_list:
                     for seed in seed_list:
-                        for alpha in alpha_list:
+                        for samples in samples_list:
                             for epsilon in epsilon_list:
                                 for delta in delta_list:
                                     filename = 'alg{}-ndim{}-rows{}-cols{}-seed{}'.format(alg, ndim, rows, cols, seed)
                                     if alg in [4, 5]:
-                                        filename += '-alpha{}'.format(alpha)
+                                        filename += '-samples{}'.format(samples)
                                     path = output_path + filename + '.txt'
 
                                     if os.path.exists(path):
@@ -44,7 +45,7 @@ def main():
                                     command.append('--alg={}'.format(alg))
                                     command.append('--seed={}'.format(seed))
 
-                                    command.append('--alpha={}'.format(alpha))
+                                    command.append('--samples={}'.format(samples))
                                     command.append('--epsilon={}'.format(epsilon))
                                     command.append('--delta={}'.format(delta))
 
