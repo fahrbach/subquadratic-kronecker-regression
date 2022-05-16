@@ -212,20 +212,20 @@ def kronecker_regression_algorithm_05(factors, l2_regularization, epsilon, delta
     del Sb
 
     # Compute decomposition of M^+
-    factors_Sigma = []
-    factors_Vt = []
+    grams_Sigma = []
+    grams_U = []
     for factor in factors:
-        u, s, vt = np.linalg.svd(factor, full_matrices=True)
-        factors_Sigma.append(s)
-        factors_Vt.append(vt)
+        u, s, vt = np.linalg.svd(factor.T @ factor, full_matrices=True)
+        grams_U.append(u)
+        grams_Sigma.append(s)
     # Constuct diagonal matrix (as a vector)
     D = np.ones(1)
-    for Sigma in factors_Sigma:
-        D = np.kron(D, Sigma * Sigma)
+    for Sigma in grams_Sigma:
+        D = np.kron(D, Sigma)
     D += l2_regularization * np.ones(D.shape[0])
     D = 1.0 / D
     D = np.reshape(D, (len(D), 1))
-    del factors_Sigma
+    del grams_Sigma
 
     # Initialize iterate
     x = np.zeros(num_columns)
@@ -233,9 +233,9 @@ def kronecker_regression_algorithm_05(factors, l2_regularization, epsilon, delta
 
     for t in range(100):
         y = SK.T @ (SK @ x) + (l2_regularization * x) - KtStSb
-        tmp = kron_mat_mult(factors_Vt, y)
+        tmp = kron_mat_mult([U.T for U in grams_U], y)
         tmp = D * tmp
-        tmp = kron_mat_mult([Vt.T for Vt in factors_Vt], tmp)
+        tmp = kron_mat_mult(grams_U, tmp)
         z = x - (1 - epsilon**0.5) * tmp
         if t > 0:
             rre = np.linalg.norm(z - x) / np.linalg.norm(x)
@@ -243,7 +243,7 @@ def kronecker_regression_algorithm_05(factors, l2_regularization, epsilon, delta
             rre = 100000
         x = z
         #print(' - step', t, 'rre', rre)
-        if rre < 1e-9:
+        if rre < 1e-6:
             break
     #print('x:', x)
     print('time:', time.process_time() - start)
