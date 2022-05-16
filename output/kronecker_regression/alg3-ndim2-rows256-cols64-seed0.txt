@@ -1,7 +1,7 @@
 ###################################
-2022-05-16 12:01:04.647498
-Namespace(ndim=2, rows=256, cols=64, alg=3, seed=0, l2_regularization=0.001, epsilon=0.1, delta=0.01, alpha=0.01)
+2022-05-16 16:53:03.021214
+Namespace(ndim=2, rows=256, cols=64, alg=3, seed=0, l2_regularization=0.001, epsilon=0.1, delta=0.01, alpha=1.0, samples=1028)
 Ktb: (4096, 1)
 tmp: (4096, 1)
-time: 0.024376626000000012
-loss: 0.0015489362410259881
+time: 0.01016547499999998
+loss: 0.0015489362410259606
