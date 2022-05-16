@@ -1,0 +1,8 @@
+###################################
+2022-05-15 23:54:34.181187
+Namespace(ndim=1, rows=8192, cols=16, alg=2, seed=4, l2_regularization=0.001, epsilon=0.1, delta=0.01, alpha=0.01)
+K: (8192, 16)
+normal_matrix: (16, 16)
+pinv_normal: (16, 16)
+time: 0.004124287000000004
+loss: 0.0005704098664456704
