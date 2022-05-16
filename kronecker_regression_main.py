@@ -74,12 +74,12 @@ def kronecker_regression_algorithm_02(factors, l2_regularization):
 # Algorithm 03: Normal equations, SVD for each factors + KronMatMul
 def kronecker_regression_algorithm_03(factors, l2_regularization):
     start = time.process_time()
-    factors_Sigma = []
-    factors_Vt = []
+    grams_Sigma = []
+    grams_U = []
     for factor in factors:
-        u, s, vt = np.linalg.svd(factor, full_matrices=True)
-        factors_Sigma.append(s)
-        factors_Vt.append(vt)
+        u, s, vt = np.linalg.svd(factor.T @ factor, full_matrices=True)
+        grams_U.append(u)
+        grams_Sigma.append(s)
         #print(u.shape, s.shape, vt.shape)
 
     num_rows = 1
@@ -89,17 +89,17 @@ def kronecker_regression_algorithm_03(factors, l2_regularization):
     Ktb = kron_mat_mult([A.T for A in factors], b)
     print('Ktb:', Ktb.shape)
     # Multiply by SVD of normal matrix pseudoinverse from factor SVDs.
-    tmp = kron_mat_mult(factors_Vt, Ktb)
+    tmp = kron_mat_mult([U.T for U in grams_U], Ktb)
     print('tmp:', tmp.shape)
     # Constuct diagonal matrix (as a vector)
     D = np.ones(1)
-    for Sigma in factors_Sigma:
-        D = np.kron(D, Sigma * Sigma)
+    for Sigma in grams_Sigma:
+        D = np.kron(D, Sigma)
     D += l2_regularization * np.ones(D.shape[0])
     D = 1.0 / D
     D = np.reshape(D, (len(D), 1))
     tmp = D * tmp
-    x = kron_mat_mult([Vt.T for Vt in factors_Vt], tmp)
+    x = kron_mat_mult(grams_U, tmp)
     print('time:', time.process_time() - start)
     print('loss:', loss_function(factors, l2_regularization, x))
 
