@@ -14,11 +14,11 @@ def main():
 
     output_path = 'output/kronecker_regression/'
 
-    for alg in alg_list:
-        for ndim in ndim_list:
-            for rows in rows_list:
-                for cols in cols_list:
-                    if cols > rows: continue
+    for ndim in ndim_list:
+        for rows in rows_list:
+            for cols in cols_list:
+                if cols > rows: continue
+                for alg in alg_list:
                     for seed in seed_list:
                         for alpha in alpha_list:
                             for epsilon in epsilon_list:
