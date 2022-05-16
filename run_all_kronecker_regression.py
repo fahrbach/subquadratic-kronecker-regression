@@ -1,12 +1,17 @@
 import subprocess
 import datetime
+import os
+
+# NOTE: This script supports caching of previous results. If we kill the process
+# then we should remove the incomplete log for the current run, so that it
+# restarts from there.
 
 def main():
     ndim_list = [1, 2, 3]
     rows_list = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
     cols_list = [2, 4, 8, 16, 32, 64, 128]
     alg_list = [1, 2, 3, 4, 5]
-    seed_list = [0, 1, 2, 3, 4]
+    seed_list = [0] # [0, 1, 2, 3, 4]
 
     alpha_list = [0.01]
     epsilon_list = [0.1]
@@ -27,6 +32,10 @@ def main():
                                     if alg in [4, 5]:
                                         filename += '-alpha{}'.format(alpha)
                                     path = output_path + filename + '.txt'
+
+                                    if os.path.exists(path):
+                                        print('Already exists:', path)
+                                        continue
 
                                     command = ['python3', 'kronecker_regression_main.py']
                                     command.append('--ndim={}'.format(ndim))
