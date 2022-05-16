@@ -1,5 +1,5 @@
 ###################################
-2022-05-16 12:23:31.846670
+2022-05-16 17:10:59.604283
 Namespace(ndim=2, rows=4096, cols=8, alg=5, seed=0, l2_regularization=0.001, epsilon=0.1, delta=0.01, alpha=1.0, samples=1028)
 leverage_scores: [7.999999996557506, 8.000000001768685]
 num_columns: 64
@@ -11,5 +11,5 @@ rescaling_coefficients: (1028,)
 SK: (1028, 64)
 Sb: (1028,)
 KtStSb: (64, 1)
-time: 1.0864729670000002
-loss: 4.280188843165221
+time: 0.03833236499999981
+loss: 4.2801887686684905
