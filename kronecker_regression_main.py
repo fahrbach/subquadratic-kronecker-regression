@@ -1,5 +1,7 @@
 from tucker_als import *
 
+import argparse
+import datetime
 import numpy as np
 import time
 
@@ -243,28 +245,49 @@ def kronecker_regression_algorithm_05(factors, l2_regularization, epsilon, delta
     print('time:', time.process_time() - start)
     print('loss:', loss_function(factors, l2_regularization, x))
 
-def main():
-    seed = 0
-    ndim = 4
-    num_rows = 10**2
-    num_cols = 8
-    l2_regularization = 1e-3
+parser = argparse.ArgumentParser()
+parser.add_argument('--ndim', type=int)
+parser.add_argument('--rows', type=int)
+parser.add_argument('--cols', type=int)
+parser.add_argument('--alg', type=int)
+parser.add_argument('--seed', type=int, default=0)
+parser.add_argument('--l2_regularization', type=float, default=1e-3)
+parser.add_argument('--epsilon', type=float, default=0.1)
+parser.add_argument('--delta', type=float, default=0.1)
+parser.add_argument('--alpha', type=float, default=1.0)
 
-    epsilon = 0.1
-    delta = 0.1
-    alpha = 0.01
+def main():
+    print('###################################')
+    print(datetime.datetime.now())
+
+    args = parser.parse_args()
+    print(args)
+
+    seed = args.seed
+    ndim = args.ndim
+    num_rows = args.rows
+    num_cols = args.cols
+    algorithm = args.alg
+
+    l2_regularization = args.l2_regularization
+
+    epsilon = args.epsilon
+    delta = args.delta
+    alpha = args.alpha
 
     factors = create_regression_experiment_01(ndim, num_rows, num_cols, seed)
 
-    #print('##### Algorithm 01 #####')
-    #kronecker_regression_algorithm_01(factors, l2_regularization)
-    #print('\n##### Algorithm 02 #####')
-    #kronecker_regression_algorithm_02(factors, l2_regularization)
-    print('\n##### Algorithm 03 #####')
-    kronecker_regression_algorithm_03(factors, l2_regularization)
-    print('\n##### Algorithm 04 #####')
-    kronecker_regression_algorithm_04(factors, l2_regularization, epsilon, delta, alpha)
-    print('\n##### Algorithm 05 #####')
-    kronecker_regression_algorithm_05(factors, l2_regularization, epsilon, delta, alpha)
+    if algorithm == 1:
+        kronecker_regression_algorithm_01(factors, l2_regularization)
+    elif algorithm == 2:
+        kronecker_regression_algorithm_02(factors, l2_regularization)
+    elif algorithm == 3:
+        kronecker_regression_algorithm_03(factors, l2_regularization)
+    elif algorithm == 4:
+        kronecker_regression_algorithm_04(factors, l2_regularization, epsilon, delta, alpha)
+    elif algorithm == 5:
+        kronecker_regression_algorithm_05(factors, l2_regularization, epsilon, delta, alpha)
+    else:
+        print('Invalid algorithm:', algorithm)
 
 main()
