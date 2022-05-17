@@ -1,0 +1,12 @@
+###################################
+2022-05-17 18:44:32.075690
+Namespace(data='hyperspectral', algorithm='HOOI', rank='3,3,3', seed=0, alpha=1.0, max_num_samples=1028, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+Loading hyperspectral tensor...
+Finished.
+AlgorithmConfig(input_shape=(1024, 1344, 33), rank=(3, 3, 3), l2_regularization_strength=0.0, algorithm='HOOI', random_seed=0, epsilon=0.1, delta=0.01, downsampling_ratio=1.0, max_num_samples=1028, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+reconstruction error=0.21779491410189628, variation=0.0019249125085691876.
+reconstruction error=0.21740616252115527, variation=0.0003887515807410036.
+reconstruction error=0.21728068422838015, variation=0.0001254782927751219.
+total time: 10.657453477
+avg step time: 2.1314906954
+rre: 0.21728068422834665
