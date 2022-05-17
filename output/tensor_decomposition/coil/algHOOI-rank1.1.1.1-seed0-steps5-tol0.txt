@@ -1,0 +1,12 @@
+###################################
+2022-05-17 16:15:07.005775
+Namespace(data='coil', algorithm='HOOI', rank='1,1,1,1', seed=0, alpha=1.0, max_num_samples=1028, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+Loading COIL-100 tensor...
+Finished.
+AlgorithmConfig(input_shape=(7200, 128, 128, 3), rank=(1, 1, 1, 1), l2_regularization_strength=0.0, algorithm='HOOI', random_seed=0, epsilon=0.1, delta=0.01, downsampling_ratio=1.0, max_num_samples=1028, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+reconstruction error=0.5283214640890275, variation=9.774308199039794e-06.
+reconstruction error=0.5283213960756694, variation=6.801335805661779e-08.
+reconstruction error=0.5283213956290893, variation=4.465801062281116e-10.
+total time: 12.276334289999998
+avg step time: 2.4552668579999994
+rre: 0.5283213956287751
