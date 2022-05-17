@@ -1,3 +1,4 @@
+import argparse
 import numpy as np
 import tensorly as tl
 import os
@@ -12,70 +13,32 @@ from scipy.ndimage import zoom
 from tensor_data_handler import TensorDataHandler
 from tucker_als import *
 
-# Initializes and returns output file for logging.
-def init_output_file(data_handler, config, prefix=None):
-    output_filename = ''
-    if data_handler:
-        output_filename += data_handler.output_filename_prefix
-    if prefix:
-        output_filename += prefix
-    output_filename += '_' + ','.join([str(x) for x in config.input_shape])
-    output_filename += '_' + ','.join([str(x) for x in config.rank])
-    output_filename += '_' + "{:.1e}".format(config.l2_regularization_strength)
-    output_filename += '_' + config.algorithm
-    output_filename += '.txt'
-
-    os.makedirs(os.path.dirname(output_filename), exist_ok=True)
-    output_file = open(output_filename, 'a')
-    
-    output_file.write('##############################################\n')
-    output_file.write(str(datetime.datetime.now()) + '\n')
-    if data_handler != None and data_handler.input_filename != None:
-        output_file.write('input_filename: ' + data_handler.input_filename+'\n')
-        print('input_filename:', data_handler.input_filename)
-
-    config_dict = dataclasses.asdict(config)
-    for key in config_dict:
-        output_file.write(str(key) + ': ' + str(config_dict[key]) + '\n')
-
-    # Compute size and compression stats.
-    input_size = np.prod(config.input_shape)
-    tucker_size = np.prod(config.rank)
-    assert(len(config.input_shape) == len(config.rank))
-    for n in range(len(config.input_shape)):
-        tucker_size += config.input_shape[n] * config.rank[n]
-    output_file.write('input_size: ' + str(input_size) + '\n')
-    output_file.write('tucker_size: ' + str(tucker_size) + '\n')
-    output_file.write('compression: ' + str(tucker_size / input_size) + '\n')
-    print('compression:', str(tucker_size / input_size))
-    output_file.flush()
-    return output_file
-
 # ==============================================================================
-# Cardiac MRI Experiment:
-# - Read tensor with shape (256, 256, 14, 20) corresponding to (x, y, z, time).
+# COIL-100
 # ==============================================================================
-def run_cardiac_mri_experiment():
+def run_coil_100_experiment():
+    print('Loading COIL-100 tensor...')
     data_handler = TensorDataHandler()
-    data_handler.load_cardiac_mri_data()
+    data_handler.load_coil_100()
+    print('tensor.shape:', data_handler.tensor.shape)
 
     config = AlgorithmConfig()
     config.input_shape = data_handler.tensor.shape
-    config.rank = (20, 10, 3, 3)
-    config.l2_regularization_strength = 0.0
+    config.rank = (1, 1, 1, 1)
 
-    #config.algorithm = 'ALS'
+    config.algorithm = 'ALS'
     #config.algorithm = 'ALS-RS-Richardson'
     #config.algorithm = 'ALS-DJSSW19'
-    config.algorithm = 'HOOI'
+    #config.algorithm = 'HOOI'
+    #config.algorithm = algorithm
 
     config.epsilon = 0.1
-    config.downsampling_ratio = 0.01
-    #config.max_num_samples = 1028
+    config.downsampling_ratio = 1e-3
+    config.max_num_samples = 1024
 
-    config.max_num_steps = 3
+    config.max_num_steps = 10
     config.rre_gap_tol = 0.0
-    config.verbose = False
+    config.verbose = True
     print(config)
 
     output_file = init_output_file(data_handler, config)
@@ -112,8 +75,54 @@ def run_video_experiment():
     config.verbose = False
     print(config)
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--data', type=str)
+# Valid: HOOI, ALS, ALS-RS, ALS-DJSSW19
+parser.add_argument('--algorithm', type=str)
+# Comma separated int list
+parser.add_argument('--rank', type=str)
+# Downsampling ratio
+parser.add_argument('--alpha', type=float, default=1.0)
+parser.add_argument('--max_num_samples', type=int, default=0)
+
+parser.add_argument('--max_num_steps', type=int, default=5)
+parser.add_argument('--rre_gap_tol', type=float, default=0.0)
+# Verbose logging
+parser.add_argument('--verbose', type=bool, default=False)
+
 def main():
-    run_cardiac_mri_experiment()
-    #run_video_experiment()
+    print('###################################')
+    print(datetime.datetime.now())
+
+    args = parser.parse_args()
+    print(args)
+
+    config = AlgorithmConfig()
+    config.algorithm = args.algorithm
+    config.rank = tuple([int(x) for x in args.rank.split(',')])
+    
+    config.epsilon = 0.1
+    config.delta = 0.01
+    config.downsampling_ratio = args.alpha
+    config.max_num_samples = args.max_num_samples
+
+    config.max_num_steps = args.max_num_steps
+    config.rre_gap_tol = args.rre_gap_tol
+    config.verbose = args.verbose
+
+    data_handler = TensorDataHandler()
+    if args.data == 'mri':
+        data_handler.load_cardiac_mri_data()
+        config.input_shape = data_handler.tensor.shape
+    elif args.data == 'coil':
+        print('Loading COIL-100 tensor...')
+        data_handler.load_coil_100()
+        print('Finished.')
+        config.input_shape = data_handler.tensor.shape
+    else:
+        print('Invalid data:', data)
+
+    print(config)
+    X_tucker = tucker_als(data_handler.tensor, config)
 
 main()

@@ -3,6 +3,7 @@ from PIL import Image
 import tensorly as tl
 import scipy.io as sio
 import skvideo.io
+from os import walk
 
 def get_output_filename_prefix(input_filename):
     tokens = input_filename.split('/')
@@ -22,7 +23,7 @@ class TensorDataHandler:
                 random_state=random_state)
         self.output_filename_prefix = 'output/random_tucker/'
 
-    def load_synthetic_shape(self, pattern='swiss', image_height=20,
+    def generate_synthetic_shape(self, pattern='swiss', image_height=20,
             image_width=20, n_channels=None):
          self.tensor = tl.datasets.synthetic.gen_image(pattern, image_height,
                  image_width, n_channels)
@@ -38,8 +39,25 @@ class TensorDataHandler:
 
     def load_cardiac_mri_data(self):
         self.input_filename = 'data/cardiac_mri_data/sol_yxzt_pat1.mat'
-        self.tensor = sio.loadmat(self.input_filename)['sol_yxzt']
+        self.tensor = sio.loadmat(self.input_filename)['sol_yxzt'].astype(float)
         self.output_filename_prefix = get_output_filename_prefix(self.input_filename)
+
+    def load_coil_100(self):
+        path = 'data/coil-100'
+        image_files = []
+        for (dirpath, dirnames, filenames) in walk(path):
+            for filename in filenames:
+                filename = filename.strip()
+                if filename[-4:] != '.png': continue
+                image_files.append(dirpath + '/' + filename)
+        image_files = sorted(image_files)
+        assert len(image_files) == 7200
+        images = []
+        for filename in image_files:
+            image = np.array(Image.open(filename))
+            images.append(image)
+        self.tensor = np.array(images) / 256.0
+        self.output_filename_prefix = 'output/coil-100/'
 
     # Video in Tucker-TensorSketch paper:
     # https://github.com/OsmanMalik/tucker-tensorsketch

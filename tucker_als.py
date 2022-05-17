@@ -19,7 +19,7 @@ class AlgorithmConfig:
     # Instance info that defines optimization problem.
     input_shape: list[int] = None
     rank: list[int] = None
-    l2_regularization_strength: float = 0.001
+    l2_regularization_strength: float = 0.0
 
     # Algorithm parameters:
     # Expected to be in ['ALS', 'ALS-RS-Richardson', 'ALS-DJSSW19', 'ALS-naive', 'HOOI'].
@@ -440,7 +440,7 @@ def tucker_als(Y_tensor, config, output_file=None, X_tucker=None):
             update_core_tensor_memory_efficient(X_tucker,
                     X_tucker_factors_gram, Y_tensor,
                     config.l2_regularization_strength, config.verbose)
-        elif config.algorithm == 'ALS-RS-Richardson':
+        elif config.algorithm == 'ALS-RS':
             update_core_tensor_by_row_sampling(X_tucker, X_tucker_factors_gram,
                     Y_tensor, config, step, output_file)
         elif config.algorithm == 'ALS-DJSSW19':
