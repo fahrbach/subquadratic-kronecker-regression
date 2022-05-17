@@ -81,6 +81,7 @@ parser.add_argument('--data', type=str)
 parser.add_argument('--algorithm', type=str)
 # Comma separated int list
 parser.add_argument('--rank', type=str)
+parser.add_argument('--seed', type=int, default=0)
 # Downsampling ratio
 parser.add_argument('--alpha', type=float, default=1.0)
 parser.add_argument('--max_num_samples', type=int, default=0)
@@ -100,6 +101,7 @@ def main():
     config = AlgorithmConfig()
     config.algorithm = args.algorithm
     config.rank = tuple([int(x) for x in args.rank.split(',')])
+    config.seed = args.seed
     
     config.epsilon = 0.1
     config.delta = 0.01
