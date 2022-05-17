@@ -21,8 +21,9 @@ class AlgorithmConfig:
     rank: list[int] = None
     l2_regularization_strength: float = 0.001
 
-    # Algorithm parameters.
-    algorithm: str = 'ALS' # Expected to be in ['ALS', 'ALS-RS', 'ALS-naive'].
+    # Algorithm parameters:
+    # Expected to be in ['ALS', 'ALS-RS-Richardson', 'ALS-DJSSW19', 'ALS-naive', 'HOOI'].
+    algorithm: str = 'ALS' 
     random_seed: int = 0
 
     # Parameters specific to 'ALS-RS'
@@ -40,8 +41,8 @@ class AlgorithmConfig:
 
     # TODO(fahrbach): Add Verify() method.
 
+# Returns (A_1 \ktimes ... \ktimes A_N) @ B
 # TODO(fahrbach): Factor out to math_utils.py
-# TODO(fahrbach): Describe runtime. Returns (A_1 \ktimes ... \ktimes A_N) @ B
 def kron_mat_mult(kroneckor_matrices, matrix):
     if len(matrix.shape) == 1:
         matrix = np.reshape(matrix, (len(matrix), 1))
@@ -181,129 +182,9 @@ def compute_ridge_leverage_scores(A, l2_regularization):
         leverage_scores[i] = A[i, :] @ normal_matrix_pinv @ A[i, :].T
     return leverage_scores
 
-# Writes vectorized version of leverage score vectors, factor matrices, and
-# core tensors to temporary files. The shapes of these np.ndarrays can be
-# reconstructed from the config file.
-def write_regression_instance_to_files(config, leverage_scores, X_tucker, step):
-    os.makedirs(os.path.dirname('tmp/'), exist_ok=True)
-
-    with open('tmp/algorithm_config.txt', 'w') as f:
-        config_dict = dataclasses.asdict(config)
-        for key in config_dict:
-            f.write(str(key) + ' ' + str(config_dict[key]) + '\n')
-        f.write('step ' + str(step) + '\n')
-    for n in range(X_tucker.core.ndim):
-        np.savetxt(f'tmp/leverage_scores_{n}_vec.txt',
-                tl.tensor_to_vec(leverage_scores[n]))
-        np.savetxt(f'tmp/factor_matrix_{n}_vec.txt',
-                tl.tensor_to_vec(X_tucker.factors[n]))
-    np.savetxt('tmp/core_tensor_vec.txt', tl.tensor_to_vec(X_tucker.core))
-
-# Still some slight unncessary memory useage, but overall it's much better.
-def update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config, step,
-        output_file):
-    l2_regularization = config.l2_regularization_strength
-    epsilon = config.epsilon
-    delta = config.delta
-    downsampling_ratio = config.downsampling_ratio
-    debug_mode = config.verbose
-
-    # Compute approximate ridge leverage scores for each factor matrix.
-    start_time = time.process_time()
-    leverage_scores = [compute_ridge_leverage_scores(factor, 0.0) for factor in
-            X_tucker.factors]
-    if debug_mode:
-        print(' - leverage score computation time:', time.process_time() - start_time)
-
-    # Write factor matrices, leverage score estimates, and core to `./tmp/`.
-    start_time = time.process_time()
-    write_regression_instance_to_files(config, leverage_scores, X_tucker, step)
-    if debug_mode:
-        print(' - write regression instance time:', time.process_time() - start_time)
-
-    # Run C++ sampling subroutine.
-    start_time = time.process_time()
-    cmd = './row_sampling'
-    os.system(cmd)
-    if debug_mode:
-        print(' - row sampling subroutine time:', time.process_time() - start_time)
-
-    # Read tmp factor matrix row sampling files from C++ subroutine ------------
-    start_time = time.process_time()
-    sampled_factor_matrices = []
-    for n in range(X_tucker.core.ndim):
-        filename = 'tmp/sampled_row_indices_factor_matrix_' + str(n) + '.txt'
-        sampled_row_indices = np.genfromtxt(filename, dtype=np.int32)
-        sampled_factor_matrix = X_tucker.factors[n][sampled_row_indices,:]
-        sampled_factor_matrices.append(sampled_factor_matrix)
-    for A in sampled_factor_matrices:
-        print(A.shape)
-
-    sampled_row_indices = np.genfromtxt('tmp/sampled_row_indices.txt', dtype=np.int32)
-    sampled_row_probability = np.genfromtxt('tmp/sampled_row_probability.txt')
-    sampled_row_weight = np.genfromtxt('tmp/sampled_row_weight.txt', dtype=np.int32)
-
-    sampled_ridge_indices = np.genfromtxt('tmp/sampled_ridge_indices.txt', dtype=np.int32)
-    sampled_ridge_probability = np.genfromtxt('tmp/sampled_ridge_probability.txt')
-    sampled_ridge_weight = np.genfromtxt('tmp/sampled_ridge_weight.txt', dtype=np.int32)
-    if debug_mode:
-        print(' - reading tmp files time:', time.process_time() - start_time)
-    # --------------------------------------------------------------------------
-
-    start_time = time.process_time()
-    num_samples = np.sum(sampled_row_weight) + np.sum(sampled_ridge_weight)
-    print('num_samples:', num_samples)
-    print(type(num_samples))
-
-    # The row-sampled design matrix is a transposed Khatri Rao product of the
-    # sampled factor matrices.
-    tmp = sampled_factor_matrices[0].T
-    for i in range(1, X_tucker.core.ndim):
-        tmp = linalg.khatri_rao(tmp, sampled_factor_matrices[i].T)
-    sampled_K = tmp.T
-    print(sampled_K.shape)
-    if debug_mode:
-        print(' - constructing sampled K time:', time.process_time() - start_time)
-    del sampled_factor_matrices
-
-    Y_vec = tl.tensor_to_vec(Y_tensor)
-    response_vec = Y_vec[sampled_row_indices] # not rescaled yet
-    del Y_vec
-    rescaling_coefficients = np.sqrt(sampled_row_weight / (num_samples * sampled_row_probability))
-
-    d = sampled_K.shape[1]
-    SK = np.einsum('i,ij->ij', rescaling_coefficients, sampled_K)
-    del sampled_K
-
-    Sb = rescaling_coefficients * response_vec
-    print('SK.shape:', SK.shape)
-    print('Sb.shape:', Sb.shape)
-
-    # Create appended ridge problem.
-    lambda_I = np.identity(d) * config.l2_regularization_strength**0.5
-    print(lambda_I.shape)
-    augmented_b = np.zeros(d)
-    print(augmented_b.shape)
-    ridge_rescaling = np.sqrt(sampled_ridge_weight / (num_samples * sampled_ridge_probability))
-    print(ridge_rescaling)
-    lambda_I = lambda_I[sampled_ridge_indices,:]
-    augmented_b = augmented_b[sampled_ridge_indices]
-    print(lambda_I.shape)
-    print(augmented_b.shape)
-    Slambda_I = np.einsum('i,ij->ij', ridge_rescaling, lambda_I)
-    print(Slambda_I.shape)
-
-    print(Sb.shape)
-    print(augmented_b.shape)
-
-    SAtSA = SK.T @ SK + Slambda_I.T @ Slambda_I
-
-    new_core_vec = np.linalg.solve(SAtSA, SK.T @ Sb)
-    X_tucker.core = tl.reshape(new_core_vec, X_tucker.core.shape)
-
 # Sampling + Richardson iteration
-def update_core_tensor_by_row_sampling_all_numpy(X_tucker,
-        X_tucker_factors_gram, Y_tensor, config, step, output_file):
+def update_core_tensor_by_row_sampling(X_tucker, X_tucker_factors_gram,
+        Y_tensor, config, step, output_file):
     l2_regularization = config.l2_regularization_strength
     epsilon = config.epsilon
     delta = config.delta
@@ -348,19 +229,17 @@ def update_core_tensor_by_row_sampling_all_numpy(X_tucker,
     rescaling_coefficients = np.sqrt(np.ones(num_samples) / (num_samples * sampled_row_probability))
     del sampled_row_probability
 
-    ######## Start Richardson iterations. ##########
-
     SK = np.einsum('i,ij->ij', rescaling_coefficients, sampled_K)
     del sampled_K
 
     # Convert from tensor index notation to vectorized indices.
-    sampled_response_indices = np.ravel_multi_index(sampled_row_indices_all,
-            Y_tensor.shape)
-    Sb = rescaling_coefficients * tl.tensor_to_vec(Y_tensor)[sampled_response_indices]
+    Sb = rescaling_coefficients * tl.tensor_to_vec(Y_tensor)[np.ravel_multi_index(sampled_row_indices_all, Y_tensor.shape)]
 
     KtStSb = SK.T @ Sb
     KtStSb = np.reshape(KtStSb, (len(KtStSb), 1))
     del Sb
+
+    ######## Start Richardson iterations. ##########
 
     # Compute decomposition of M^+
     grams_Sigma = []
@@ -397,8 +276,7 @@ def update_core_tensor_by_row_sampling_all_numpy(X_tucker,
             break
     X_tucker.core = tl.reshape(x, X_tucker.core.shape)
 
-def update_core_tensor_with_DJSSW19_all_numpy(X_tucker, Y_tensor, config, step,
-        output_file):
+def update_core_tensor_with_DJSSW19(X_tucker, Y_tensor, config, step, output_file):
     l2_regularization = config.l2_regularization_strength
     epsilon = config.epsilon
     delta = config.delta
@@ -416,18 +294,15 @@ def update_core_tensor_with_DJSSW19_all_numpy(X_tucker, Y_tensor, config, step,
     if debug_mode:
         print(' - leverage score computation time:', time.process_time() - start_time)
         
-    sample_term_1 = 420 * np.log(4*d / delta)
-    sample_term_2 = np.power(delta * epsilon, -1)
-    num_samples = 4 * d * 2 * np.maximum(sample_term_1, sample_term_2)
-    num_samples = int(np.ceil(num_samples * config.downsampling_ratio))
-    # 9710925      # old version
-    # 1687583      # new version
+    num_samples = int(downsampling_ratio * 1680 * d * np.log(40 * d) * np.log(1.0 / delta) / epsilon)
+    if config.max_num_samples > 0:
+        num_samples = min(num_samples, config.max_num_samples)
     if debug_mode:
-        print(' - num_samples:', num_samples)
+        print('num_samples:', num_samples)
     
     start_time = time.process_time()
     
-    sampled_factor_matrices = []
+    sampled_K = np.ones((1, num_samples))
     sampled_row_probability = np.ones(num_samples)
     sampled_row_indices_all = []
     for n in range(X_tucker.core.ndim):
@@ -436,217 +311,21 @@ def update_core_tensor_with_DJSSW19_all_numpy(X_tucker, Y_tensor, config, step,
                 size=num_samples, p=list(leverage_scores[n] / sum_ls))
         sampled_row_probability = np.multiply(sampled_row_probability,
                 leverage_scores[n][sampled_row_indices] / sum_ls)
-        sampled_factor_matrices.append(X_tucker.factors[n][sampled_row_indices,:])
+        sampled_K = linalg.khatri_rao(sampled_K, X_tucker.factors[n][sampled_row_indices,:].T)
         sampled_row_indices_all.append(sampled_row_indices)
-
-    # The row-sampled design matrix is a transposed Khatri Rao product of the
-    # sampled factor matrices.
-    tmp = sampled_factor_matrices[0].T
-    for i in range(1, X_tucker.core.ndim):
-        tmp = linalg.khatri_rao(tmp, sampled_factor_matrices[i].T)
-    sampled_K = tmp.T
+    sampled_K = sampled_K.T
     if debug_mode:
-        print(sampled_K.shape)
+        print('sampled_K:', sampled_K.shape)
         print(' - constructing sampled K time:', time.process_time() - start_time)
-    del sampled_factor_matrices
 
     rescaling_coefficients = np.sqrt(np.ones(num_samples) / (num_samples * sampled_row_probability))
+    del sampled_row_probability
 
-    d = sampled_K.shape[1]
     SK = np.einsum('i,ij->ij', rescaling_coefficients, sampled_K)
     del sampled_K
 
     # Convert from tensor index notation to vectorized indices.
-    sampled_response_indices = np.ravel_multi_index(sampled_row_indices_all,
-            Y_tensor.shape)
-    Y_vec = tl.tensor_to_vec(Y_tensor)
-    response_vec = Y_vec[sampled_response_indices] # not rescaled yet
-    del Y_vec
-    Sb = rescaling_coefficients * response_vec
-
-    assert(config.l2_regularization_strength == 0.0)
-    new_core_vec = np.linalg.pinv(SK) @ Sb
-    X_tucker.core = tl.reshape(new_core_vec, X_tucker.core.shape)
-
-
-# Old -- uses slower IO for sampling.
-# Still some slight unncessary memory useage, but overall it's much better.
-def update_core_tensor_by_row_sampling_and_richardson(X_tucker, X_tucker_factors_gram,
-        Y_tensor, config, step, output_file):
-    l2_regularization = config.l2_regularization_strength
-    epsilon = config.epsilon
-    delta = config.delta
-    downsampling_ratio = config.downsampling_ratio
-    debug_mode = config.verbose
-
-    # Compute approximate ridge leverage scores for each factor matrix.
-    start_time = time.process_time()
-    leverage_scores = [compute_ridge_leverage_scores(factor, 0.0) for factor in
-            X_tucker.factors]
-    if debug_mode:
-        print(' - leverage score computation time:', time.process_time() - start_time)
-
-    # Write factor matrices, leverage score estimates, and core to `./tmp/`.
-    start_time = time.process_time()
-    write_regression_instance_to_files(config, leverage_scores, X_tucker, step)
-    if debug_mode:
-        print(' - write regression instance time:', time.process_time() - start_time)
-
-    # Run C++ sampling subroutine.
-    start_time = time.process_time()
-    cmd = './row_sampling'
-    os.system(cmd)
-    if debug_mode:
-        print(' - row sampling subroutine time:', time.process_time() - start_time)
-
-    # Read tmp factor matrix row sampling files from C++ subroutine ------------
-    start_time = time.process_time()
-    sampled_factor_matrices = []
-    for n in range(X_tucker.core.ndim):
-        filename = 'tmp/sampled_row_indices_factor_matrix_' + str(n) + '.txt'
-        sampled_row_indices = np.genfromtxt(filename, dtype=np.int32)
-        sampled_factor_matrix = X_tucker.factors[n][sampled_row_indices,:]
-        sampled_factor_matrices.append(sampled_factor_matrix)
-
-    sampled_row_indices = np.genfromtxt('tmp/sampled_row_indices.txt', dtype=np.int32)
-    sampled_row_probability = np.genfromtxt('tmp/sampled_row_probability.txt')
-    sampled_row_weight = np.genfromtxt('tmp/sampled_row_weight.txt', dtype=np.int32)
-
-    sampled_ridge_indices = np.genfromtxt('tmp/sampled_ridge_indices.txt', dtype=np.int32)
-    sampled_ridge_probability = np.genfromtxt('tmp/sampled_ridge_probability.txt')
-    sampled_ridge_weight = np.genfromtxt('tmp/sampled_ridge_weight.txt', dtype=np.int32)
-    if debug_mode:
-        print(' - reading tmp files time:', time.process_time() - start_time)
-    # --------------------------------------------------------------------------
-
-    start_time = time.process_time()
-    num_samples = np.sum(sampled_row_weight) + np.sum(sampled_ridge_weight)
-    print('num_samples:', num_samples)
-
-    # The row-sampled design matrix is a transposed Khatri Rao product of the
-    # sampled factor matrices.
-    tmp = sampled_factor_matrices[0].T
-    for i in range(1, X_tucker.core.ndim):
-        tmp = linalg.khatri_rao(tmp, sampled_factor_matrices[i].T)
-    sampled_K = tmp.T
-    if debug_mode:
-        print(' - constructing sampled K time:', time.process_time() - start_time)
-    del sampled_factor_matrices
-
-    Y_vec = tl.tensor_to_vec(Y_tensor)
-    response_vec = Y_vec[sampled_row_indices] # not rescaled yet
-    del Y_vec
-    rescaling_coefficients = np.sqrt(sampled_row_weight / (num_samples * sampled_row_probability))
-
-    d = sampled_K.shape[1]
-    SK = np.einsum('i,ij->ij', rescaling_coefficients, sampled_K)
-    del sampled_K
-
-    Sb = rescaling_coefficients * response_vec
-    print('SK.shape:', SK.shape)
-    print('Sb.shape:', Sb.shape)
-
-    assert(config.l2_regularization_strength == 0.0)
-    
-    # Perform Richardson iterations
-    gram_pinv = [np.linalg.pinv(gram) for gram in X_tucker_factors_gram]
-
-    KtStSb = SK.T @ Sb
-    KtStSb = np.reshape(KtStSb, (len(KtStSb), 1))
-
-    x = np.zeros(KtStSb.shape)
-    x = np.reshape(x, (len(x), 1))
-
-    for t in range(100):
-        y = SK.T @ (SK @ x) - KtStSb
-        z = x - (1 - epsilon**0.5) * kron_mat_mult(gram_pinv, y)
-        if t > 0:
-            rre = np.linalg.norm(z - x) / np.linalg.norm(x)
-        else:
-            rre = 100000
-        x = z
-        #print('step', t, 'rre', rre)
-        if rre < 1e-6:
-            break
-    X_tucker.core = tl.reshape(x, X_tucker.core.shape)
-
-# Experimental: Use pseudoinverse to solve.
-def update_core_tensor_by_row_sampling_woodruff(X_tucker, Y_tensor, config, step,
-        output_file):
-    l2_regularization = config.l2_regularization_strength
-    epsilon = config.epsilon
-    delta = config.delta
-    downsampling_ratio = config.downsampling_ratio
-    debug_mode = config.verbose
-
-    # Compute approximate ridge leverage scores for each factor matrix.
-    start_time = time.process_time()
-    leverage_scores = [compute_ridge_leverage_scores(factor, 0.0) for factor in
-            X_tucker.factors]
-    if debug_mode:
-        print(' - leverage score computation time:', time.process_time() - start_time)
-
-    # Write factor matrices, leverage score estimates, and core to `./tmp/`.
-    start_time = time.process_time()
-    write_regression_instance_to_files(config, leverage_scores, X_tucker, step)
-    if debug_mode:
-        print(' - write regression instance time:', time.process_time() - start_time)
-
-    # Run C++ sampling subroutine.
-    start_time = time.process_time()
-    cmd = './row_sampling'
-    os.system(cmd)
-    if debug_mode:
-        print(' - row sampling subroutine time:', time.process_time() - start_time)
-
-    # Read tmp factor matrix row sampling files from C++ subroutine ------------
-    start_time = time.process_time()
-    sampled_factor_matrices = []
-    for n in range(X_tucker.core.ndim):
-        filename = 'tmp/sampled_row_indices_factor_matrix_' + str(n) + '.txt'
-        sampled_row_indices = np.genfromtxt(filename, dtype=np.int32)
-        sampled_factor_matrix = X_tucker.factors[n][sampled_row_indices,:]
-        sampled_factor_matrices.append(sampled_factor_matrix)
-    for A in sampled_factor_matrices:
-        print(A.shape)
-
-    sampled_row_indices = np.genfromtxt('tmp/sampled_row_indices.txt', dtype=np.int32)
-    sampled_row_probability = np.genfromtxt('tmp/sampled_row_probability.txt')
-    sampled_row_weight = np.genfromtxt('tmp/sampled_row_weight.txt', dtype=np.int32)
-
-    sampled_ridge_indices = np.genfromtxt('tmp/sampled_ridge_indices.txt', dtype=np.int32)
-    sampled_ridge_probability = np.genfromtxt('tmp/sampled_ridge_probability.txt')
-    sampled_ridge_weight = np.genfromtxt('tmp/sampled_ridge_weight.txt', dtype=np.int32)
-    if debug_mode:
-        print(' - reading tmp files time:', time.process_time() - start_time)
-    # --------------------------------------------------------------------------
-
-    start_time = time.process_time()
-    num_samples = np.sum(sampled_row_weight) + np.sum(sampled_ridge_weight)
-    print('num_samples:', num_samples)
-    print(type(num_samples))
-
-    # The row-sampled design matrix is a transposed Khatri Rao product of the
-    # sampled factor matrices.
-    tmp = sampled_factor_matrices[0].T
-    for i in range(1, X_tucker.core.ndim):
-        tmp = linalg.khatri_rao(tmp, sampled_factor_matrices[i].T)
-    sampled_K = tmp.T
-    print(sampled_K.shape)
-    if debug_mode:
-        print(' - constructing sampled K time:', time.process_time() - start_time)
-    del sampled_factor_matrices
-
-    Y_vec = tl.tensor_to_vec(Y_tensor)
-    response_vec = Y_vec[sampled_row_indices] # not rescaled yet
-    del Y_vec
-    rescaling_coefficients = np.sqrt(sampled_row_weight / (num_samples * sampled_row_probability))
-
-    d = sampled_K.shape[1]
-    SK = np.einsum('i,ij->ij', rescaling_coefficients, sampled_K)
-    del sampled_K
-
-    Sb = rescaling_coefficients * response_vec
+    Sb = rescaling_coefficients * tl.tensor_to_vec(Y_tensor)[np.ravel_multi_index(sampled_row_indices_all, Y_tensor.shape)]
 
     assert(config.l2_regularization_strength == 0.0)
     new_core_vec = np.linalg.pinv(SK) @ Sb
@@ -682,7 +361,36 @@ def ComputeLossTerms(X_tucker, Y_tensor, l2_regularization, Y_norm, Y_size):
     loss_terms.rre = loss_terms.residual_norm / Y_norm
     return loss_terms
 
+def RunTensorlyHooi(Y, config, output_file):
+    assert(config.l2_regularization_strength == 0.0)
+    start_time = time.process_time()
+    core, tucker_factors = tucker(Y, rank=config.rank,
+            n_iter_max=config.max_num_steps, init='random',
+            tol=config.rre_gap_tol, verbose=True)
+    end_time = time.process_time()
+    print('total time:', end_time - start_time)
+    if output_file:
+        output_file.write('total time: ' + str(end_time - start_time) + '\n')
+    print('avg step time:', (end_time - start_time) / config.max_num_steps)
+    if output_file:
+        output_file.write('HOOI avg time: ' + str((end_time - start_time) / config.max_num_steps) + '\n')
+
+    
+    X_tucker = random_tucker(Y.shape, config.rank, random_state=config.random_seed)
+    X_tucker.factors = tucker_factors
+    X_tucker.core = core
+    loss = ComputeLossTerms(X_tucker, Y, config.l2_regularization_strength,
+            np.linalg.norm(Y), Y.size)
+    print('rre:', loss.rre)
+    if output_file:
+        output_file.write('rre: ' + str(loss.rre) + '\n')
+
 def tucker_als(Y_tensor, config, output_file=None, X_tucker=None):
+    # Separate case for running HOOI in Tensorly.
+    if config.algorithm == 'HOOI':
+        RunTensorlyHooi(Y_tensor, config, output_file)
+        return
+
     if X_tucker == None:
         X_tucker = random_tucker(Y_tensor.shape, config.rank,
                 random_state=config.random_seed)
@@ -732,27 +440,17 @@ def tucker_als(Y_tensor, config, output_file=None, X_tucker=None):
             update_core_tensor_memory_efficient(X_tucker,
                     X_tucker_factors_gram, Y_tensor,
                     config.l2_regularization_strength, config.verbose)
-        elif config.algorithm == 'ALS-RS-Richardson-numpy':
-            update_core_tensor_by_row_sampling_all_numpy(X_tucker,
-                    X_tucker_factors_gram, Y_tensor, config, step, output_file)
-        elif config.algorithm == 'ALS-DJSSW19-numpy':
-            update_core_tensor_with_DJSSW19_all_numpy(X_tucker, Y_tensor,
-                    config, step, output_file)
+        elif config.algorithm == 'ALS-RS-Richardson':
+            update_core_tensor_by_row_sampling(X_tucker, X_tucker_factors_gram,
+                    Y_tensor, config, step, output_file)
+        elif config.algorithm == 'ALS-DJSSW19':
+            update_core_tensor_with_DJSSW19(X_tucker, Y_tensor, config, step,
+                    output_file)
 
         # Old implementations.
         elif config.algorithm == 'ALS-naive':
             update_core_tensor_naive(X_tucker, Y_tensor,
                     config.l2_regularization_strength)
-        elif config.algorithm == 'ALS-RS':
-            update_core_tensor_by_row_sampling(X_tucker, Y_tensor, config,
-                    step, output_file)
-        elif config.algorithm == 'ALS-RS-Richardson':
-            update_core_tensor_by_row_sampling_and_richardson(X_tucker,
-                    X_tucker_factors_gram,
-                    Y_tensor, config, step, output_file)
-        elif config.algorithm == 'ALS-DJSSW19':
-            update_core_tensor_by_row_sampling_woodruff(X_tucker,
-                    Y_tensor, config, step, output_file)
         else:
             print('algorithm:', config.algorithm, 'is unsupported!')
             assert(False)
