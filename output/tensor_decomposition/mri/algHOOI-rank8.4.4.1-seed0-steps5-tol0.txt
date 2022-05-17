@@ -1,0 +1,10 @@
+###################################
+2022-05-17 16:00:40.505502
+Namespace(data='mri', algorithm='HOOI', rank='8,4,4,1', seed=0, alpha=1.0, max_num_samples=1028, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+AlgorithmConfig(input_shape=(256, 256, 14, 20), rank=(8, 4, 4, 1), l2_regularization_strength=0.0, algorithm='HOOI', random_seed=0, epsilon=0.1, delta=0.01, downsampling_ratio=1.0, max_num_samples=1028, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+reconstruction error=0.4482598281462229, variation=0.0009646057259658503.
+reconstruction error=0.44824102815550565, variation=1.8799990717244253e-05.
+reconstruction error=0.44824057297827435, variation=4.551772312955116e-07.
+total time: 8.320274216000001
+avg step time: 1.6640548432000002
+rre: 0.44824057297774467
