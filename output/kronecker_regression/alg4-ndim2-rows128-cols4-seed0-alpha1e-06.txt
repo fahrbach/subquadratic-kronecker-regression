@@ -1,0 +1,16 @@
+###################################
+2022-05-16 23:23:42.957785
+Namespace(ndim=2, rows=128, cols=4, alg=4, seed=0, l2_regularization=0.001, epsilon=0.1, delta=0.01, alpha=1e-06, samples=0)
+leverage_scores: [4.0000000012849375, 3.999999998157177]
+num_columns: 16
+num_samples: 7
+samples: 0 7 [ 37  38  46  55  73  87 105]
+samples: 1 7 [ 8  8 45 89 92 98 98]
+sampled_K: (7, 16)
+rescaling_coefficients: (7,)
+SK: (7, 16)
+Sb: (7,)
+normal matrix: (16, 16)
+x: (16,)
+time: 0.001522331000000099
+loss: 0.05753853177161443
