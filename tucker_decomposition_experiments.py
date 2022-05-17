@@ -114,11 +114,18 @@ def main():
 
     data_handler = TensorDataHandler()
     if args.data == 'mri':
+        print('Loading MRI tensor...')
         data_handler.load_cardiac_mri_data()
+        print('Finished.')
         config.input_shape = data_handler.tensor.shape
     elif args.data == 'coil':
         print('Loading COIL-100 tensor...')
         data_handler.load_coil_100()
+        print('Finished.')
+        config.input_shape = data_handler.tensor.shape
+    elif args.data == 'hyperspectral':
+        print('Loading hyperspectral tensor...')
+        data_handler.load_hyperspectral()
         print('Finished.')
         config.input_shape = data_handler.tensor.shape
     else:

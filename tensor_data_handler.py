@@ -42,6 +42,12 @@ class TensorDataHandler:
         self.tensor = sio.loadmat(self.input_filename)['sol_yxzt'].astype(float)
         self.output_filename_prefix = get_output_filename_prefix(self.input_filename)
 
+    # https://personalpages.manchester.ac.uk/staff/d.h.foster/Time-Lapse_HSIs/nogueiro/nogueiro_1140.zip
+    def load_hyperspectral(self):
+        self.input_filename = 'data/hyperspectral/nogueiro_1140.mat'
+        self.tensor = sio.loadmat(self.input_filename)['hsi'].astype(float)
+        self.output_filename_prefix = get_output_filename_prefix(self.input_filename)
+
     def load_coil_100(self):
         path = 'data/coil-100'
         image_files = []
