@@ -66,7 +66,7 @@ def main():
         data_handler.load_hyperspectral()
         print('Finished.')
         config.input_shape = data_handler.tensor.shape
-    elif args.data == 'movie':
+    elif args.data == 'video':
         print('Loading movie tensor...')
         data_handler.load_video('data/videos/walking_past_camera.mp4')
         print('Finished.')
