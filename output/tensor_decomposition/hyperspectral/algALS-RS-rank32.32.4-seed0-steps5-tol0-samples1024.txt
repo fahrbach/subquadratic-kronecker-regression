@@ -1,0 +1,25 @@
+###################################
+2022-05-17 22:33:42.764640
+Namespace(data='hyperspectral', algorithm='ALS-RS', rank='32,32,4', seed=0, alpha=1.0, max_num_samples=1024, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+Loading hyperspectral tensor...
+Finished.
+AlgorithmConfig(input_shape=(1024, 1344, 33), rank=(32, 32, 4), l2_regularization_strength=0.0, algorithm='ALS-RS', random_seed=0, epsilon=0.1, delta=0.01, downsampling_ratio=1.0, max_num_samples=1024, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+step: 0
+loss: 7355.33441657231 rmse: 0.01272607941124346 rre: 0.40248220405090984 time: 0.8558920890000001
+loss: 5048.024896505802 rmse: 0.010542756147388836 rre: 0.3334311844088775 time: 0.5289342380000006
+loss: 1366.5465543770451 rmse: 0.0054853662881382895 rre: 0.17348330482095722 time: 1.9299870850000005
+loss: 3.724086084202343e+159 rmse: 9.055308967905813e+75 rre: 2.863883364223474e+77 time: 1.3360406959999995
+Warning: The loss function increased!
+rre_diff: -2.863883364223474e+77
+
+step: 1
+loss: 34460.850006829365 rmse: 0.027545864709263356 rre: 0.8711811377569592 time: 0.8558680069999998
+loss: 1833.0579251292766 rmse: 0.006353038860967504 rre: 0.2009248096412311 time: 0.526842062
+loss: 1582.4524253626926 rmse: 0.005902809241446849 rre: 0.18668559238209803 time: 2.1071401949999995
+loss: nan rmse: nan rre: 1.8248404655882924e+75 time: 1.3462802780000018
+rre_diff: 2.8456349595675913e+77
+
+step: 2
+loss: nan rmse: nan rre: nan time: 0.9439511700000018
+loss: nan rmse: nan rre: nan time: 0.5403118520000021
+loss: nan rmse: nan rre: nan time: 1.9282608910000008

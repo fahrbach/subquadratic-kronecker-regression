@@ -1,0 +1,34 @@
+###################################
+2022-05-17 21:48:54.586980
+Namespace(data='hyperspectral', algorithm='ALS-RS', rank='16,16,16', seed=0, alpha=1.0, max_num_samples=4096, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+Loading hyperspectral tensor...
+Finished.
+AlgorithmConfig(input_shape=(1024, 1344, 33), rank=(16, 16, 16), l2_regularization_strength=0.0, algorithm='ALS-RS', random_seed=0, epsilon=0.1, delta=0.01, downsampling_ratio=1.0, max_num_samples=4096, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+step: 0
+loss: 6571.69306755206 rmse: 0.012029070025868954 rre: 0.38043818997522755 time: 1.5414607279999997
+loss: 4436.764385514802 rmse: 0.009883860346620156 rre: 0.31259257217304864 time: 1.1914003930000003
+loss: 2376.7347050552225 rmse: 0.007234087729922461 rre: 0.22878936078808773 time: 1.193526048999999
+loss: 3.296758573066399e+60 rmse: 2.694244404016213e+26 rre: 8.520970134935851e+27 time: 3.511788626999998
+Warning: The loss function increased!
+rre_diff: -8.520970134935851e+27
+
+step: 1
+loss: 42460.833762150025 rmse: 0.030576493291145118 rre: 0.9670295158692147 time: 1.468296372000001
+loss: 11691.379730663635 rmse: 0.01604450417518981 rre: 0.5074325874180167 time: 1.154538487
+loss: 2491.8418800385025 rmse: 0.007407192949749654 rre: 0.23426408463329734 time: 1.1939135739999998
+loss: 1.506171153228278e+65 rmse: 5.758781226168401e+28 rre: 1.821304806967873e+30 time: 3.507329298000002
+Warning: The loss function increased!
+rre_diff: -1.812783836832937e+30
+
+step: 2
+loss: 74746.70884834029 rmse: 0.04056854715097315 rre: 1.2830438774443822 time: 1.4681537530000028
+loss: 11165789.935052479 rmse: 0.49583610110203 rre: 15.681593707739985 time: 1.1563535220000034
+Warning: The loss function increased!
+loss: 8605.923559109093 rmse: 0.01376550534793574 rre: 0.4353556781530735 time: 1.191933512999995
+loss: nan rmse: nan rre: nan time: 3.619757364999998
+rre_diff: nan
+
+step: 3
+loss: nan rmse: nan rre: nan time: 1.4648211809999978
+loss: nan rmse: nan rre: nan time: 1.1513579739999997
+loss: nan rmse: nan rre: nan time: 1.1920978160000004
