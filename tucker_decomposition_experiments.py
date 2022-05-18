@@ -13,68 +13,6 @@ from scipy.ndimage import zoom
 from tensor_data_handler import TensorDataHandler
 from tucker_als import *
 
-# ==============================================================================
-# COIL-100
-# ==============================================================================
-def run_coil_100_experiment():
-    print('Loading COIL-100 tensor...')
-    data_handler = TensorDataHandler()
-    data_handler.load_coil_100()
-    print('tensor.shape:', data_handler.tensor.shape)
-
-    config = AlgorithmConfig()
-    config.input_shape = data_handler.tensor.shape
-    config.rank = (1, 1, 1, 1)
-
-    config.algorithm = 'ALS'
-    #config.algorithm = 'ALS-RS-Richardson'
-    #config.algorithm = 'ALS-DJSSW19'
-    #config.algorithm = 'HOOI'
-    #config.algorithm = algorithm
-
-    config.epsilon = 0.1
-    config.downsampling_ratio = 1e-3
-    config.max_num_samples = 1024
-
-    config.max_num_steps = 10
-    config.rre_gap_tol = 0.0
-    config.verbose = True
-    print(config)
-
-    output_file = init_output_file(data_handler, config)
-
-    X_tucker = tucker_als(data_handler.tensor, config, output_file)
-
-# ==============================================================================
-# Video Experiments:
-# - Read 4-way video tensor (frame, x, y, RGB) of shape (2493, 1080, 1920, 3).
-# ==============================================================================
-def run_video_experiment():
-    # TODO(fahrbach): Add resize options. Use first 100 frames for now.
-    data_handler = TensorDataHandler()
-    data_handler.load_video('data/videos/walking_past_camera.mp4')
-    print(data_handler.tensor.shape)
-
-    #data_handler.tensor = data_handler.tensor[0:100, 0:100, 0:100, :]
-
-    config = AlgorithmConfig()
-    config.input_shape = data_handler.tensor.shape
-    config.rank = (20, 10, 3, 3)
-    config.l2_regularization_strength = 0.0
-
-    config.algorithm = 'ALS'
-    #config.algorithm = 'ALS-RS-Richardson'
-    #config.algorithm = 'ALS-DJSSW19'
-
-    config.epsilon = 0.1
-    config.downsampling_ratio = 0.01
-    #config.max_num_samples = 1028
-
-    config.max_num_steps = 1
-    config.rre_gap_tol = 0.0
-    config.verbose = False
-    print(config)
-
 parser = argparse.ArgumentParser()
 parser.add_argument('--data', type=str)
 # Valid: HOOI, ALS, ALS-RS, ALS-DJSSW19
@@ -126,6 +64,11 @@ def main():
     elif args.data == 'hyperspectral':
         print('Loading hyperspectral tensor...')
         data_handler.load_hyperspectral()
+        print('Finished.')
+        config.input_shape = data_handler.tensor.shape
+    elif args.data == 'movie':
+        print('Loading movie tensor...')
+        data_handler.load_video('data/videos/walking_past_camera.mp4')
         print('Finished.')
         config.input_shape = data_handler.tensor.shape
     else:

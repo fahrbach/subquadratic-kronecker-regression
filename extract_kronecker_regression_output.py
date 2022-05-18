@@ -1,19 +1,26 @@
 import os.path
 import numpy as np
 
+# NOTE: Currently using seed=0 for all stats.
+
 """
 Goal: Input fixed ndim and one of {rows, cols}.
 Then output loss/time blocks that have been averaged over all seeds
 """
 def main_fixed_cols():
     ndim = 2
-    cols = 32
+    cols = 64
 
     rows_candidates = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
-    algorithms = [1, 2, 3, 4, 5]
-    seeds = [0, 1, 2, 3, 4]
+    algorithms = [1, 3, 4, 5]
+    seeds = [0]
+
+    #rows_candidates = [1000, 2500, 5000, 7500, 10000]
+    #algorithms = [1, 3, 4, 5]
+    #seeds = [0]
     
-    alpha = 0.01
+    alpha = 1e-5
+    #samples = 1028
     epsilon = 0.1
     delta = 0.01
 
@@ -75,6 +82,8 @@ def main_fixed_cols():
         time_by_rows_mean.append(tmp_time_mean)
         loss_by_rows_mean.append(tmp_loss_mean)
 
+    print('\nndim={} cols={}'.format(ndim, cols))
+
     # Print formatted output for running time.
     print('\nRunning times:')
     for row in time_by_rows_mean:
@@ -93,13 +102,14 @@ Then output loss/time blocks that have been averaged over all seeds
 """
 def main_fixed_rows():
     ndim = 2
-    rows = 512
+    rows = 16384
 
     cols_candidates = [2, 4, 8, 16, 32, 64, 128]
     algorithms = [1, 2, 3, 4, 5]
-    seeds = [0, 1, 2, 3, 4]
+    seeds = [0]
     
-    alpha = 0.01
+    #alpha = 0.01
+    samples = 1028
     epsilon = 0.1
     delta = 0.01
 
@@ -119,7 +129,7 @@ def main_fixed_rows():
             for seed in seeds:
                 filename = 'alg{}-ndim{}-rows{}-cols{}-seed{}'.format(alg, ndim, rows, cols, seed)
                 if alg in [4, 5]:
-                    filename += '-alpha{}'.format(alpha)
+                    filename += '-samples{}'.format(samples)
                 path = output_path + filename + '.txt'
 
                 if not os.path.exists(path):
@@ -165,6 +175,8 @@ def main_fixed_rows():
         time_by_rows_mean.append(tmp_time_mean)
         loss_by_rows_mean.append(tmp_loss_mean)
 
+    print('\nndim={} rows={}'.format(ndim, rows))
+
     # Print formatted output for running time.
     print('\nRunning times:')
     for row in time_by_rows_mean:
@@ -178,6 +190,7 @@ def main_fixed_rows():
         print(formatted)
 
 def main():
-    main_fixed_rows()
+    main_fixed_cols()
+    #main_fixed_rows()
 
 main()
