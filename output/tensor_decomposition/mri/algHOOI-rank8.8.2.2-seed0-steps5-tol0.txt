@@ -1,0 +1,12 @@
+###################################
+2022-05-18 08:57:50.689070
+Namespace(data='mri', algorithm='HOOI', rank='8,8,2,2', seed=0, alpha=1.0, max_num_samples=1024, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+Loading MRI tensor...
+Finished.
+AlgorithmConfig(input_shape=(256, 256, 14, 20), rank=(8, 8, 2, 2), l2_regularization_strength=0.0, algorithm='HOOI', random_seed=0, epsilon=0.1, delta=0.01, downsampling_ratio=1.0, max_num_samples=1024, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+reconstruction error=0.46518696349169814, variation=0.0015945167513864988.
+reconstruction error=0.465127215796413, variation=5.974769528516166e-05.
+reconstruction error=0.4651208528691532, variation=6.362927259750961e-06.
+total time: 8.705342166
+avg step time: 1.7410684332
+rre: 0.46512085286869015

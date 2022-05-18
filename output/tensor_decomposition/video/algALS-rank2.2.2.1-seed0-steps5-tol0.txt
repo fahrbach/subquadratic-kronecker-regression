@@ -1,0 +1,8 @@
+###################################
+2022-05-17 23:18:30.926663
+Namespace(data='video', algorithm='ALS', rank='2,2,2,1', seed=0, alpha=1.0, max_num_samples=1024, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+Loading movie tensor...
+loading video: data/videos/walking_past_camera.mp4
+video shape: (2493, 1080, 1920, 3)
+Finished.
+AlgorithmConfig(input_shape=(2493, 1080, 1920, 3), rank=(2, 2, 2, 1), l2_regularization_strength=0.0, algorithm='ALS', random_seed=0, epsilon=0.1, delta=0.01, downsampling_ratio=1.0, max_num_samples=1024, max_num_steps=5, rre_gap_tol=0.0, verbose=False)

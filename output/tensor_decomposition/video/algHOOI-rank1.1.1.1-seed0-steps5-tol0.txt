@@ -1,0 +1,14 @@
+###################################
+2022-05-17 22:40:50.304326
+Namespace(data='video', algorithm='HOOI', rank='1,1,1,1', seed=0, alpha=1.0, max_num_samples=1024, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+Loading movie tensor...
+loading video: data/videos/walking_past_camera.mp4
+video shape: (2493, 1080, 1920, 3)
+Finished.
+AlgorithmConfig(input_shape=(2493, 1080, 1920, 3), rank=(1, 1, 1, 1), l2_regularization_strength=0.0, algorithm='HOOI', random_seed=0, epsilon=0.1, delta=0.01, downsampling_ratio=1.0, max_num_samples=1024, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+reconstruction error=13.106551782721317, variation=-0.7570496245760818.
+reconstruction error=13.106597844397738, variation=-4.606167642151604e-05.
+reconstruction error=13.106594611999423, variation=3.2323983152338087e-06.
+total time: 542.935779873
+avg step time: 108.5871559746
+rre: 0.22997754840899198
