@@ -1,0 +1,17 @@
+###################################
+2022-05-23 17:00:25.593618
+Namespace(data='hyperspectral', algorithm='ALS-RS', rank='64,64,8', seed=0, alpha=1.0, max_num_samples=1024, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+Loading hyperspectral tensor...
+Finished.
+AlgorithmConfig(input_shape=(1024, 1344, 33), rank=(64, 64, 8), l2_regularization_strength=0.0, algorithm='ALS-RS', random_seed=0, epsilon=0.1, delta=0.01, downsampling_ratio=1.0, max_num_samples=1024, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+step: 0
+loss: 6122.929249294523 rmse: 0.01161109124556507 rre: 0.36721895604568067 time: 1.8912285440000005
+loss: 3805.92473459148 rmse: 0.009154265733267242 rre: 0.2895179991991826 time: 1.3957790830000008
+loss: 954.3200983781159 rmse: 0.004583956129155261 rre: 0.14497479596937515 time: 4.5946166129999995
+loss: nan rmse: nan rre: inf time: 7.428650659000002
+rre_diff: -inf
+
+step: 1
+loss: nan rmse: nan rre: nan time: 1.9017241009999992
+loss: nan rmse: nan rre: nan time: 1.3645607330000011
+loss: nan rmse: nan rre: nan time: 4.481372576999995

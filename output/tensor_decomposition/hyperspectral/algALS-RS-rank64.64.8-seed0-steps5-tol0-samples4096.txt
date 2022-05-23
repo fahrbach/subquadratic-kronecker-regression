@@ -1,0 +1,34 @@
+###################################
+2022-05-23 17:01:04.272679
+Namespace(data='hyperspectral', algorithm='ALS-RS', rank='64,64,8', seed=0, alpha=1.0, max_num_samples=4096, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+Loading hyperspectral tensor...
+Finished.
+AlgorithmConfig(input_shape=(1024, 1344, 33), rank=(64, 64, 8), l2_regularization_strength=0.0, algorithm='ALS-RS', random_seed=0, epsilon=0.1, delta=0.01, downsampling_ratio=1.0, max_num_samples=4096, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
+step: 0
+loss: 6122.929249294523 rmse: 0.01161109124556507 rre: 0.36721895604568067 time: 1.8267933769999996
+loss: 3805.92473459148 rmse: 0.009154265733267242 rre: 0.2895179991991826 time: 1.347415934999999
+loss: 954.3200983781159 rmse: 0.004583956129155261 rre: 0.14497479596937515 time: 4.252562473000001
+loss: 3.809216131432385e+217 rmse: 9.158223222181266e+104 rre: 2.896431609877548e+106 time: 27.970526974000002
+Warning: The loss function increased!
+rre_diff: -2.896431609877548e+106
+
+step: 1
+loss: 39711.74350321224 rmse: 0.029570106912686925 rre: 0.9352009695715384 time: 1.897344731000004
+loss: 1860.0612564250991 rmse: 0.006399662053117459 rre: 0.20239934115482702 time: 1.5659137130000005
+loss: 1364.62522001777 rmse: 0.005481508779671382 rre: 0.1733613050707015 time: 4.184727613999996
+loss: 45405.56225718068 rmse: 0.0316189865866311 rre: 0.9999999999999984 time: 27.761477182
+Warning: The loss function increased!
+rre_diff: 2.896431609877548e+106
+
+step: 2
+loss: 33572.520213102194 rmse: 0.027188508846870754 rre: 0.8598791986067748 time: 1.790155874000007
+loss: 58090025.8987129 rmse: 1.1309520768070092 rre: 35.7681317112544 time: 1.3629959160000027
+Warning: The loss function increased!
+loss: 282404.906662821 rmse: 0.07885505453829879 rre: 2.4939146712450158 time: 4.087459080999992
+loss: nan rmse: nan rre: nan time: 27.857100481000018
+rre_diff: nan
+
+step: 3
+loss: nan rmse: nan rre: nan time: 1.772076191999986
+loss: nan rmse: nan rre: nan time: 1.330275505000003
+loss: nan rmse: nan rre: nan time: 4.047742301999989
