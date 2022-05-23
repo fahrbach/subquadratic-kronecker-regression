@@ -252,7 +252,7 @@ def update_core_tensor_by_row_sampling(X_tucker, X_tucker_factors_gram,
     D = np.ones(1)
     for Sigma in grams_Sigma:
         D = np.kron(D, Sigma)
-    D += l2_regularization * np.ones(D.shape[0])
+    D += (l2_regularization + 1e-9) * np.ones(D.shape[0])
     D = 1.0 / D
     D = np.reshape(D, (len(D), 1))
     del grams_Sigma
