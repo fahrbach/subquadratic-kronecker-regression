@@ -267,8 +267,9 @@ def update_core_tensor_by_row_sampling(X_tucker, X_tucker_factors_gram,
         tmp = kron_mat_mult(grams_U, tmp)
         z = x - (1 - epsilon**0.5) * tmp
         if t == 0:
-            continue
-        rre = np.linalg.norm(z - x) / np.linalg.norm(x)
+            rre = 10**10
+        else:
+            rre = np.linalg.norm(z - x) / np.linalg.norm(x)
         x = z
         #print('step', t, 'rre', rre)
         if rre < 1e-6:
