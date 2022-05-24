@@ -252,7 +252,7 @@ def update_core_tensor_by_row_sampling(X_tucker, X_tucker_factors_gram,
     D = np.ones(1)
     for Sigma in grams_Sigma:
         D = np.kron(D, Sigma)
-    D += (l2_regularization + 1e-9) * np.ones(D.shape[0])
+    D += (l2_regularization + 1e-6) * np.ones(D.shape[0])
     D = 1.0 / D
     D = np.reshape(D, (len(D), 1))
     del grams_Sigma
@@ -266,10 +266,9 @@ def update_core_tensor_by_row_sampling(X_tucker, X_tucker_factors_gram,
         tmp = D * tmp
         tmp = kron_mat_mult(grams_U, tmp)
         z = x - (1 - epsilon**0.5) * tmp
-        if t > 0:
-            rre = np.linalg.norm(z - x) / np.linalg.norm(x)
-        else:
-            rre = 100000
+        if t == 0:
+            continue
+        rre = np.linalg.norm(z - x) / np.linalg.norm(x)
         x = z
         #print('step', t, 'rre', rre)
         if rre < 1e-6:
