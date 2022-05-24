@@ -1,17 +1,17 @@
 ###################################
-2022-05-23 19:37:30.304935
+2022-05-23 21:05:27.408955
 Namespace(data='hyperspectral', algorithm='ALS-RS', rank='64,64,8', seed=0, alpha=1.0, max_num_samples=1024, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
 Loading hyperspectral tensor...
 Finished.
 AlgorithmConfig(input_shape=(1024, 1344, 33), rank=(64, 64, 8), l2_regularization_strength=0.0, algorithm='ALS-RS', random_seed=0, epsilon=0.1, delta=0.01, downsampling_ratio=1.0, max_num_samples=1024, max_num_steps=5, rre_gap_tol=0.0, verbose=False)
 step: 0
-loss: 6122.929249294523 rmse: 0.01161109124556507 rre: 0.36721895604568067 time: 1.7133738789999997
-loss: 3805.92473459148 rmse: 0.009154265733267242 rre: 0.2895179991991826 time: 1.3795672129999996
-loss: 954.3200983781159 rmse: 0.004583956129155261 rre: 0.14497479596937515 time: 3.8118510559999983
-loss: nan rmse: nan rre: inf time: 7.094350459000001
+loss: 6122.929249294523 rmse: 0.01161109124556507 rre: 0.36721895604568067 time: 1.7991011629999996
+loss: 3805.92473459148 rmse: 0.009154265733267242 rre: 0.2895179991991826 time: 1.4125306430000002
+loss: 954.3200983781159 rmse: 0.004583956129155261 rre: 0.14497479596937515 time: 3.7999384020000004
+loss: nan rmse: nan rre: inf time: 8.886856067
 rre_diff: -inf
 
 step: 1
-loss: nan rmse: nan rre: nan time: 1.771051503999999
-loss: nan rmse: nan rre: nan time: 1.3130994079999994
-loss: nan rmse: nan rre: nan time: 3.8703670750000008
+loss: nan rmse: nan rre: nan time: 2.101100842000001
+loss: nan rmse: nan rre: nan time: 1.4230693120000026
+loss: nan rmse: nan rre: nan time: 4.574322522000003
