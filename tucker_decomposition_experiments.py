@@ -23,6 +23,7 @@ parser.add_argument('--seed', type=int, default=0)
 # Downsampling ratio
 parser.add_argument('--alpha', type=float, default=1.0)
 parser.add_argument('--max_num_samples', type=int, default=0)
+parser.add_argument('--epsilon', type=float, default=0.1)
 
 parser.add_argument('--max_num_steps', type=int, default=5)
 parser.add_argument('--rre_gap_tol', type=float, default=0.0)
@@ -41,7 +42,7 @@ def main():
     config.rank = tuple([int(x) for x in args.rank.split(',')])
     config.seed = args.seed
     
-    config.epsilon = 0.1
+    config.epsilon = args.epsilon
     config.delta = 0.01
     config.downsampling_ratio = args.alpha
     config.max_num_samples = args.max_num_samples
